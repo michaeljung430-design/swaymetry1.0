@@ -1,4 +1,4 @@
-const CACHE = 'motion-lab-v6-neutral-voice-storage';
+const CACHE = 'motion-lab-v7-clear-results';
 const ASSETS = [
   './',
   './index.html',

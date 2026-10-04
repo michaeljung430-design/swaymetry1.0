@@ -10,6 +10,12 @@
     return `<div class="metric-grid">${items.map(([label, value, flag]) => `<div class="metric-card${flag ? ' flag' : ''}"><small>${escapeHtml(label)}</small><b>${value == null ? '—' : escapeHtml(String(value))}</b></div>`).join('')}</div>`;
   }
   function fmt(v, unit = '', d = 1) { return v == null ? '—' : `${v.toFixed(d)}${unit}`; }
+  const FACE_POINTS = new Set(['nose','left_eye_inner','left_eye','left_eye_outer','right_eye_inner','right_eye','right_eye_outer','left_ear','right_ear','mouth_left','mouth_right']);
+  function withoutHeadData(value) {
+    if (Array.isArray(value)) return value.map(withoutHeadData);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value).filter(([key]) => !FACE_POINTS.has(key) && key !== 'head' && key !== 'head_neck').map(([key, item]) => [key, withoutHeadData(item)]));
+  }
 
   // ---- Hand-rolled canvas time-series chart with hover + click-to-seek ----
   function drawChart(canvas, seriesList, { onSeek, yLabel = '' } = {}) {
@@ -88,7 +94,17 @@
     const r = record.interpreted;
     if (!r) { container.innerHTML = '<p>No interpreted data for this trial (interpretation failed or trial predates this feature).</p>'; return; }
     const o = r.whole_body_overview;
-    let html = '';
+    let html = '<div class="movement-summary"><strong>What happened in this trial</strong><ul>';
+    for (const side of ['left','right']) {
+      const knee=record.camera_posture?.[`${side}_knee`];
+      const angle=knee?.peak_frontal_deviation_signed_deg;
+      if (Number.isFinite(angle)) html += `<li>${side === 'left' ? 'Left' : 'Right'} knee moved ${Math.abs(angle).toFixed(1)}° ${angle >= 0 ? 'inward (valgus-like)' : 'outward (varus-like)'} at about ${fmt(knee.timestamp_peak_frontal_deviation_seconds,' s')} in the front-camera image. This is a 2D estimate, not a diagnosis.</li>`;
+    }
+    const contacts=record.events?.filter(e=>e.type==='possible_foot_contact')||[];
+    const contactStatus=record.single_leg_metrics?.contact_detection_status;
+    if (contactStatus==='estimated') html += `<li>Raised-foot possible floor contacts: ${contacts.length}${contacts.length ? `, near ${contacts.map(e=>fmt(e.timestamp_seconds,' s')).join(', ')}` : ''}. Confirm against the video or an observer; the camera cannot prove contact.</li>`;
+    else if (record.single_leg_metrics?.applicable) html += '<li>Raised-foot contact estimate unavailable because the foot was not clearly tracked or lifted.</li>';
+    html += '</ul><p class="status-line">Phone acceleration is movement intensity, not distance traveled. For example, 0.3022 m/s² describes how strongly the phone sped up or slowed down on average; it does not mean 0.3022 meters of sway. Compare only like-for-like trials, and review camera tracking quality before interpreting differences.</p></div><details class="region-section"><summary>Detailed measurements and charts</summary>';
     html += `<div class="metric-grid overview-grid">${metricGrid([
       ['Trial', r.trial_name.replace(/_/g, ' ')],
       ['Duration', `${o.duration_seconds}s`],
@@ -98,10 +114,10 @@
       ['Pelvic tilt range', fmt(o.pelvic_tilt_range, '°')],
       ['Left knee ROM', fmt(o.left_knee_rom, '°')],
       ['Right knee ROM', fmt(o.right_knee_rom, '°')],
-      ['Foot corrections', o.foot_corrections_total],
+      ['Ankle repositioning estimates', o.foot_corrections_total],
       ['Asymmetry flagged', o.major_asymmetry_flagged ? 'Yes' : 'No', o.major_asymmetry_flagged],
     ])}</div>`;
-    html += `<div class="movement-summary"><strong>Movement Summary</strong><ul>${(r.movement_summary || []).map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul></div>`;
+    html += `<div class="movement-summary"><strong>Movement summary</strong><ul>${(r.movement_summary || []).filter(s=>!/\b(head|nose|neck|facial)\b/i.test(s)).map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul></div>`;
     html += `<h4 class="results-group-heading">L5 phone sensor (device coordinates)</h4>`;
     html += metricGrid([
       ['RMS acceleration magnitude', fmt(record.phone_balance?.total_sway, ' m/s²', 3)],
@@ -159,10 +175,6 @@
       </tbody></table>`);
 
     html += `<h4 class="results-group-heading">Body Regions</h4>`;
-    html += regionSection('Head & Neck', metricGrid([
-      ['Mean head tilt', fmt(r.head_neck.mean_tilt, '°')], ['Range', fmt(r.head_neck.range, '°')], ['Variability', fmt(r.head_neck.std, '°')],
-    ]) + `<p style="font-size:.82rem">${escapeHtml(r.head_neck.confidence_note)}</p>` + chartCard('Head tilt over time', [{ samples: r.head_neck.head_tilt.samples }], 'degrees'));
-
     html += regionSection('Shoulders', metricGrid([
       ['Mean tilt', fmt(r.shoulders.mean_tilt, '°')], ['Max left tilt', fmt(r.shoulders.max_left_tilt, '°')], ['Max right tilt', fmt(r.shoulders.max_right_tilt, '°')],
       ['Range', fmt(r.shoulders.range, '°')], ['Variability', fmt(r.shoulders.std, '°')],
@@ -183,7 +195,7 @@
       return regionSection(`${side === 'left' ? 'Left' : 'Right'} Leg`, metricGrid([
         ['Mean knee angle', fmt(leg.knee.mean_angle, '°')], ['Knee ROM', fmt(leg.knee.angle_range, '°')],
         ['Peak medial deviation', fmt(leg.knee.peak_medial_deviation, ' units', 3)], ['Peak lateral deviation', fmt(leg.knee.peak_lateral_deviation, ' units', 3)],
-        ['Foot corrections', leg.ankle.correction_count], ['Tracking confidence', fmt((leg.knee.tracking_confidence ?? 0) * 100, '%', 0)],
+        ['Ankle repositioning estimates', leg.ankle.correction_count], ['Tracking confidence', fmt((leg.knee.tracking_confidence ?? 0) * 100, '%', 0)],
       ]));
     }
     html += legSection('left', r.left_leg) + legSection('right', r.right_leg);
@@ -199,7 +211,7 @@
 
     function ankleDetail(side, a) {
       const unavailable = !a.angle_available ? `<p class="warn" style="font-size:.82rem">${escapeHtml(a.unavailable_reason)}</p>` : '';
-      return `<div class="split-col"><strong>${side === 'left' ? 'Left' : 'Right'} Ankle/Foot</strong>${metricGrid([['Corrections', a.correction_count], ['Tracking confidence', fmt((a.tracking_confidence ?? 0) * 100, '%', 0)]])}${unavailable}${a.angle_available ? chartCard('Ankle angle over time', [{ samples: a.ankle_angle.samples }], 'degrees') : ''}</div>`;
+      return `<div class="split-col"><strong>${side === 'left' ? 'Left' : 'Right'} Ankle/Foot</strong>${metricGrid([['Ankle repositioning estimates', a.correction_count], ['Tracking confidence', fmt((a.tracking_confidence ?? 0) * 100, '%', 0)]])}${unavailable}${a.angle_available ? chartCard('Ankle angle over time', [{ samples: a.ankle_angle.samples }], 'degrees') : ''}</div>`;
     }
     html += regionSection('Ankles / Feet', `<div class="split-row">${ankleDetail('left', r.ankles_feet.left)}${ankleDetail('right', r.ankles_feet.right)}</div>${metricGrid([['Mean stance width', fmt(r.ankles_feet.stance_width.mean, ' units', 3)]])}`);
 
@@ -208,7 +220,7 @@
       <table class="summary-table"><thead><tr><th>Measurement</th><th>Left</th><th>Right</th><th>Difference</th><th>Symmetry index</th></tr></thead><tbody>
       <tr><td>Min knee angle (flexion)</td><td>${fmt(r.symmetry.knee_flexion.left, '°')}</td><td>${fmt(r.symmetry.knee_flexion.right, '°')}</td><td>${fmt(r.symmetry.knee_flexion.difference, '°')}</td><td>${fmt(r.symmetry.knee_flexion.symmetry_index, '%')}</td></tr>
       <tr><td>Knee range of motion</td><td>${fmt(r.symmetry.knee_rom.left, '°')}</td><td>${fmt(r.symmetry.knee_rom.right, '°')}</td><td>${fmt(r.symmetry.knee_rom.difference, '°')}</td><td>${fmt(r.symmetry.knee_rom.symmetry_index, '%')}</td></tr>
-      <tr><td>Foot corrections</td><td>${r.symmetry.foot_corrections.left}</td><td>${r.symmetry.foot_corrections.right}</td><td>${r.symmetry.foot_corrections.difference}</td><td>—</td></tr>
+      <tr><td>Ankle repositioning estimates</td><td>${r.symmetry.foot_corrections.left}</td><td>${r.symmetry.foot_corrections.right}</td><td>${r.symmetry.foot_corrections.difference}</td><td>—</td></tr>
       </tbody></table>`);
 
     html += regionSection('Measurement Quality', metricGrid([
@@ -216,12 +228,12 @@
       ['Frames excluded', `${r.measurement_quality.excludedFrames} / ${r.measurement_quality.totalFrames}`],
       ['Normalization reference', r.normalization.scale_reference],
       ['Camera view', r.camera_orientation],
-    ]) + `<table class="summary-table"><thead><tr><th>Region</th><th>Reliable frames</th></tr></thead><tbody>${Object.entries(r.measurement_quality.byRegion).map(([k, v]) => `<tr><td>${escapeHtml(k.replace(/_/g, ' '))}</td><td>${Math.round((v ?? 0) * 100)}%</td></tr>`).join('')}</tbody></table>`);
+    ]) + `<table class="summary-table"><thead><tr><th>Region</th><th>Reliable frames</th></tr></thead><tbody>${Object.entries(r.measurement_quality.byRegion).filter(([k])=>k!=='head').map(([k, v]) => `<tr><td>${escapeHtml(k.replace(/_/g, ' '))}</td><td>${Math.round((v ?? 0) * 100)}%</td></tr>`).join('')}</tbody></table>`);
 
     html += regionSection('Trial Comparison', renderComparisonSection());
     html += regionSection('Progress Over Time', renderProgressSection(r.trial_name, o));
 
-    container.innerHTML = html;
+    container.innerHTML = html + '</details>';
     container.querySelectorAll('.event-jump').forEach(btn => btn.onclick = () => seekReplay(+btn.dataset.t));
   }
 
@@ -261,7 +273,7 @@
     if (!raw || !raw.cameraFrames?.length) { container.innerHTML = '<p>No raw data stored for this trial (it may predate this feature, or storage may be unavailable in this browser).</p>'; return; }
     rawCache = raw;
     const frames = raw.cameraFrames;
-    const landmarkNames = Object.keys(frames[0].landmarks);
+    const landmarkNames = Object.keys(frames[0].landmarks).filter(name=>!FACE_POINTS.has(name));
 
     let html = `
       <div class="button-row secondary-row" style="margin-bottom:6px">
@@ -319,7 +331,7 @@
     $('raw-chart-point').onchange = renderRawChart;
     renderTable(); renderRawChart();
 
-    $('raw-export-json').onclick = () => downloadFile(`${record.trial_name}-raw.json`, JSON.stringify(raw, null, 2), 'application/json');
+    $('raw-export-json').onclick = () => downloadFile(`${record.trial_name}-raw.json`, JSON.stringify(withoutHeadData(raw), null, 2), 'application/json');
     if ($('raw-export-side-csv')) $('raw-export-side-csv').onclick = () => {
       const sideFrames = raw.sideFrames || [];
       const names = Object.keys(sideFrames[0]?.landmarks || {});
@@ -396,6 +408,6 @@
     populateTrialSelect,
     setCurrentTrial(name) { currentTrialName = name; },
     getCurrentTrial() { return currentTrialName; },
-    renderInterpretedView, renderRawView,
+    renderInterpretedView, renderRawView, withoutHeadData,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

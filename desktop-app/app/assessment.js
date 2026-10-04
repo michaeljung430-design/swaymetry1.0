@@ -30,15 +30,9 @@
   }
   setProtocol();
 
-  // Every landmark MediaPipe's Pose model produces (33 points), not just the
-  // subset used in balance calculations -- the Raw Results view preserves
-  // every one of these per frame.
+  // Record body landmarks only. MediaPipe also estimates face points, but
+  // those are intentionally excluded from new recordings and exports.
   const LANDMARK_INDEX = {
-    nose: 0,
-    left_eye_inner: 1, left_eye: 2, left_eye_outer: 3,
-    right_eye_inner: 4, right_eye: 5, right_eye_outer: 6,
-    left_ear: 7, right_ear: 8,
-    mouth_left: 9, mouth_right: 10,
     left_shoulder: 11, right_shoulder: 12,
     left_elbow: 13, right_elbow: 14,
     left_wrist: 15, right_wrist: 16,
@@ -51,7 +45,7 @@
     left_heel: 29, right_heel: 30,
     left_foot_index: 31, right_foot_index: 32,
   };
-  const FULL_BODY_LANDMARKS = ['left_shoulder', 'right_shoulder', 'left_hip', 'right_hip', 'left_knee', 'right_knee', 'left_ankle', 'right_ankle'];
+  const FULL_BODY_LANDMARKS = ['left_shoulder', 'right_shoulder', 'left_hip', 'right_hip', 'left_knee', 'right_knee', 'left_ankle', 'right_ankle', 'left_heel', 'right_heel', 'left_foot_index', 'right_foot_index'];
   const VISIBILITY_THRESHOLD = 0.45;
 
   const mean = a => a.length ? a.reduce((s, x) => s + x, 0) / a.length : null;
@@ -86,7 +80,7 @@
 
   function fullBodyInFrame(landmarks) {
     if (!landmarks) return false;
-    return FULL_BODY_LANDMARKS.every(name => landmarkVisible(landmarks[name]));
+    return FULL_BODY_LANDMARKS.every(name => landmarkVisible(landmarks[name]) && landmarks[name].x >= 0.02 && landmarks[name].x <= 0.98 && landmarks[name].y >= 0.02 && landmarks[name].y <= 0.98);
   }
 
   // Builds one landmark-frame record from a raw MediaPipe pose-landmark array.
@@ -99,6 +93,50 @@
         : { x: null, y: null, z: null, confidence: null };
     }
     return { timestamp_seconds: timestampSeconds, landmarks };
+  }
+
+  // A single front camera cannot verify floor contact. Only flag a possible
+  // contact after the non-support foot was clearly elevated, then returned
+  // near the support foot's floor line for at least 150 ms.
+  function detectSingleLegTouchdowns(frames, trial) {
+    if (trial?.stance !== 'single_leg') return { count: null, duration: null, events: [], status: 'not_applicable' };
+    const raised = trial.tested_leg === 'right' ? 'left' : 'right';
+    const support = trial.tested_leg;
+    const samples = [];
+    for (const frame of frames) {
+      const l = frame.landmarks || {};
+      const floorPoints = side => [l[`${side}_heel`], l[`${side}_foot_index`]].filter(landmarkVisible);
+      const raisedPoints = floorPoints(raised), supportPoints = floorPoints(support);
+      if (!raisedPoints.length || !supportPoints.length || !landmarkVisible(l.left_hip) || !landmarkVisible(l.right_hip)) continue;
+      const width = Math.abs(l.left_hip.x - l.right_hip.x);
+      if (width < 0.04) continue;
+      const verticalGap = Math.max(...supportPoints.map(p => p.y)) - Math.max(...raisedPoints.map(p => p.y));
+      samples.push({ t: frame.timestamp_seconds, gap: verticalGap / width });
+    }
+    if (samples.length < 10 || samples.length < frames.length * 0.5) return { count: null, duration: null, events: [], status: 'unavailable' };
+    const events = [];
+    let state = 'await_lift', raisedStart = null, nearStart = null, lastT = null, duration = 0, seenLift = false;
+    for (const s of samples) {
+      if (lastT != null && s.t - lastT > 0.35) { state = 'await_lift'; raisedStart = null; nearStart = null; }
+      lastT = s.t;
+      if (s.gap >= 0.4) {
+        nearStart = null;
+        if (raisedStart == null) raisedStart = s.t;
+        if (s.t - raisedStart >= 0.15) { state = 'raised'; seenLift = true; }
+      } else {
+        raisedStart = null;
+        if (state === 'raised' && s.gap <= 0.15) { state = 'near_floor'; nearStart = s.t; }
+        else if (state === 'near_floor') {
+          if (s.gap > 0.15) { state = 'raised'; nearStart = null; }
+          else if (s.t - nearStart >= 0.15) {
+            events.push({ timestamp_seconds: round(nearStart, 2), type: 'possible_foot_contact', description: 'Raised foot approached the support-foot floor line; visually confirm contact.' });
+            duration += s.t - nearStart;
+            state = 'await_lift'; nearStart = null;
+          }
+        }
+      }
+    }
+    return seenLift ? { count: events.length, duration: round(duration, 2), events, status: 'estimated' } : { count: null, duration: null, events: [], status: 'unavailable' };
   }
 
   // Builds one phone sample from a devicemotion event plus the latest known
@@ -218,7 +256,6 @@
         trunkSigned: verticalDeviation(hip, shoulder),
         pelvisTilt: tilt(l.left_hip, l.right_hip),
         shoulderTilt: tilt(l.left_shoulder, l.right_shoulder),
-        head: (landmarkVisible(l.nose) && shoulder.x != null) ? Math.abs(verticalDeviation(shoulder, l.nose)) : null,
         leftKnee: jointAngle(l.left_hip, l.left_knee, l.left_ankle),
         rightKnee: jointAngle(l.right_hip, l.right_knee, l.right_ankle),
         leftFrontalKnee: frontalKneeDeviation(l.left_hip, l.left_knee, l.left_ankle, l.right_hip, f.image_width, f.image_height),
@@ -239,7 +276,7 @@
 
     const col = key => visibleRows.map(r => r[key]).filter(v => v != null);
     const numeric = key => visibleRows.map(r => r[key]);
-    const trunkVals = col('trunk'), pelvisVals = col('pelvisTilt').map(Math.abs), shoulderVals = col('shoulderTilt').map(Math.abs), headVals = col('head');
+    const trunkVals = col('trunk'), pelvisVals = col('pelvisTilt').map(Math.abs), shoulderVals = col('shoulderTilt').map(Math.abs);
     const leftKneeVals = col('leftKnee'), rightKneeVals = col('rightKnee');
     const leftFrontalKneeVals = col('leftFrontalKnee'), rightFrontalKneeVals = col('rightFrontalKnee');
     const hipX = visibleRows.map(r => r.hip.x).filter(v => v != null);
@@ -294,38 +331,22 @@
     const trackingLossEvents = [];
     { let gapStart = null; for (const r of rows) { if (!r.visible) { if (gapStart == null) gapStart = r.t; } else if (gapStart != null) { trackingLossEvents.push({ timestamp_seconds: gapStart, type: 'temporary_pose_tracking_loss', description: 'Body tracking was lost briefly during the trial.' }); gapStart = null; } } if (gapStart != null) trackingLossEvents.push({ timestamp_seconds: gapStart, type: 'temporary_pose_tracking_loss', description: 'Body tracking was lost briefly during the trial.' }); }
 
-    // Single-leg specific: detect the non-tested foot touching down near the stance foot.
+    // Single-leg specific: conservative 2D possible-contact estimate.
     let singleLeg = nullSingleLegMetrics(trial);
     const footEvents = [];
     if (trial && trial.stance === 'single_leg' && stanceWidths.length) {
-      const raisedIsLeft = trial.tested_leg === 'right'; // testing the right leg means the LEFT foot is raised
-      const raisedAnkleKey = raisedIsLeft ? 'leftAnkle' : 'rightAnkle';
-      const stanceAnkleKey = raisedIsLeft ? 'rightAnkle' : 'leftAnkle';
-      const gapVals = visibleRows.map(r => r.ankleGap).filter(v => v != null);
-      const touchdownThreshold = Math.max(0.02, (mean(gapVals) || bodyWidthRef) * 0.35);
-      const gapSeries = visibleRows.map(r => ({ timestamp_seconds: r.t, value: r.ankleGap != null ? touchdownThreshold - r.ankleGap : null }));
-      const touchdownRuns = detectThresholdEvents(gapSeries, 0.00001, 'foot_touchdown', () => 'Opposite foot touched down during single-leg stance.');
-      // Re-derive actual start/end + duration for touchdown runs (detectThresholdEvents only gives the peak instant).
-      let active = null;
-      const touchdownIntervals = [];
-      for (const r of visibleRows) {
-        const down = r.ankleGap != null && r.ankleGap < touchdownThreshold;
-        if (down) { if (!active) active = { start: r.t, end: r.t }; else active.end = r.t; }
-        else if (active) { touchdownIntervals.push(active); active = null; }
-      }
-      if (active) touchdownIntervals.push(active);
-      const minEventDuration = 0.15;
-      const realTouchdowns = touchdownIntervals.filter(iv => iv.end - iv.start >= minEventDuration);
-      for (const iv of realTouchdowns) footEvents.push({ timestamp_seconds: round(iv.start, 2), type: 'foot_touchdown', description: 'Opposite foot touched down during single-leg stance.' });
-      const touchdownDuration = realTouchdowns.reduce((s, iv) => s + (iv.end - iv.start), 0);
+      const contact = detectSingleLegTouchdowns(frames, trial);
+      footEvents.push(...contact.events);
       const testedKneeVals = trial.tested_leg === 'right' ? rightKneeVals : leftKneeVals;
       const testedKneeDisp = trial.tested_leg === 'right' ? rightKneeDisp : leftKneeDisp;
       singleLeg = {
         applicable: true,
         tested_leg: trial.tested_leg,
-        successful_stance_duration: round(Math.max(0, TRIAL_DURATION_SECONDS - touchdownDuration), 2),
-        opposite_foot_touchdowns: realTouchdowns.length,
-        touchdown_duration: round(touchdownDuration, 2),
+        successful_stance_duration: null,
+        opposite_foot_touchdowns: contact.count,
+        touchdown_duration: contact.duration,
+        contact_detection_status: contact.status,
+        contact_detection_note: 'Possible raised-foot contact from 2D video, not confirmed floor contact; observer should verify. Continuous stance duration cannot be established from this estimate.',
         tested_leg_knee_movement: round(stdDev(testedKneeVals)),
         tested_leg_knee_displacement: round(stdDev(testedKneeDisp)),
         trunk_compensation: round(trunkStd),
@@ -345,9 +366,8 @@
         trunk: { mean_lean: round(mean(trunkVals)), max_lean: round(Math.max(...trunkVals)), dominant_direction: mean(trunkSignedVals) >= 0 ? 'right' : 'left', movement_variability: round(trunkStd), sway_range: round(Math.max(...trunkSignedVals) - Math.min(...trunkSignedVals)) },
         shoulders: { mean_tilt: round(mean(shoulderVals)), max_tilt: round(Math.max(...shoulderVals)), dominant_direction: mean(shoulderSignedVals) >= 0 ? 'right' : 'left', movement_variability: round(stdDev(shoulderSignedVals)) },
         pelvis: { mean_tilt: round(mean(pelvisVals)), max_tilt: round(Math.max(...pelvisVals)), dominant_direction: mean(pelvisSignedVals) >= 0 ? 'right' : 'left', lateral_hip_displacement: round(Math.max(...hipX) - Math.min(...hipX)), movement_variability: round(stdDev(pelvisSignedVals)) },
-        head: { mean_tilt: round(mean(headVals)), max_tilt: round(safeMax(headVals)), movement_range: round(safeRange(headVals)) },
-        left_knee: { mean_angle: round(mean(leftKneeVals)), movement_variability: round(leftKneeVariability), medial_lateral_displacement: round(stdDev(leftKneeDisp)), mean_frontal_deviation_deg: round(mean(leftFrontalKneeVals), 2), peak_frontal_deviation_deg: round(safeMax(leftFrontalKneeVals.map(Math.abs)), 2) },
-        right_knee: { mean_angle: round(mean(rightKneeVals)), movement_variability: round(rightKneeVariability), medial_lateral_displacement: round(stdDev(rightKneeDisp)), mean_frontal_deviation_deg: round(mean(rightFrontalKneeVals), 2), peak_frontal_deviation_deg: round(safeMax(rightFrontalKneeVals.map(Math.abs)), 2) },
+        left_knee: { mean_angle: round(mean(leftKneeVals)), movement_variability: round(leftKneeVariability), medial_lateral_displacement: round(stdDev(leftKneeDisp)), mean_frontal_deviation_deg: round(mean(leftFrontalKneeVals), 2), peak_frontal_deviation_deg: round(safeMax(leftFrontalKneeVals.map(Math.abs)), 2), peak_frontal_deviation_signed_deg: round(visibleRows.filter(r => r.leftFrontalKnee != null).sort((a,b) => Math.abs(b.leftFrontalKnee)-Math.abs(a.leftFrontalKnee))[0]?.leftFrontalKnee,2), timestamp_peak_frontal_deviation_seconds: round(visibleRows.filter(r => r.leftFrontalKnee != null).sort((a,b) => Math.abs(b.leftFrontalKnee)-Math.abs(a.leftFrontalKnee))[0]?.t,2) },
+        right_knee: { mean_angle: round(mean(rightKneeVals)), movement_variability: round(rightKneeVariability), medial_lateral_displacement: round(stdDev(rightKneeDisp)), mean_frontal_deviation_deg: round(mean(rightFrontalKneeVals), 2), peak_frontal_deviation_deg: round(safeMax(rightFrontalKneeVals.map(Math.abs)), 2), peak_frontal_deviation_signed_deg: round(visibleRows.filter(r => r.rightFrontalKnee != null).sort((a,b) => Math.abs(b.rightFrontalKnee)-Math.abs(a.rightFrontalKnee))[0]?.rightFrontalKnee,2), timestamp_peak_frontal_deviation_seconds: round(visibleRows.filter(r => r.rightFrontalKnee != null).sort((a,b) => Math.abs(b.rightFrontalKnee)-Math.abs(a.rightFrontalKnee))[0]?.t,2) },
         feet: { stance_width: round(mean(stanceWidths)), left_foot_movement: round(leftFootMovement), right_foot_movement: round(rightFootMovement) },
         whole_body: {
           lateral_movement: round(Math.max(...hipX) - Math.min(...hipX)),
@@ -368,15 +388,14 @@
     return {
       trunk: nullBlock({ sway_range: null }), shoulders: nullBlock({}),
       pelvis: { mean_tilt: null, max_tilt: null, dominant_direction: null, lateral_hip_displacement: null, movement_variability: null },
-      head: { mean_tilt: null, max_tilt: null, movement_range: null },
-      left_knee: { mean_angle: null, movement_variability: null, medial_lateral_displacement: null, mean_frontal_deviation_deg: null, peak_frontal_deviation_deg: null },
-      right_knee: { mean_angle: null, movement_variability: null, medial_lateral_displacement: null, mean_frontal_deviation_deg: null, peak_frontal_deviation_deg: null },
+      left_knee: { mean_angle: null, movement_variability: null, medial_lateral_displacement: null, mean_frontal_deviation_deg: null, peak_frontal_deviation_deg: null, peak_frontal_deviation_signed_deg: null, timestamp_peak_frontal_deviation_seconds: null },
+      right_knee: { mean_angle: null, movement_variability: null, medial_lateral_displacement: null, mean_frontal_deviation_deg: null, peak_frontal_deviation_deg: null, peak_frontal_deviation_signed_deg: null, timestamp_peak_frontal_deviation_seconds: null },
       feet: { stance_width: null, left_foot_movement: null, right_foot_movement: null },
       whole_body: { lateral_movement: null, anterior_posterior_movement: null, asymmetry: null, postural_corrections: null, major_instability_events: null },
     };
   }
   function nullSingleLegMetrics(trial) {
-    return { applicable: !!(trial && trial.stance === 'single_leg'), tested_leg: trial ? trial.tested_leg : null, successful_stance_duration: null, opposite_foot_touchdowns: null, touchdown_duration: null, tested_leg_knee_movement: null, tested_leg_knee_displacement: null, trunk_compensation: null, pelvic_compensation: null, major_balance_corrections: null };
+    return { applicable: !!(trial && trial.stance === 'single_leg'), tested_leg: trial ? trial.tested_leg : null, successful_stance_duration: null, opposite_foot_touchdowns: null, touchdown_duration: null, contact_detection_status: 'unavailable', tested_leg_knee_movement: null, tested_leg_knee_displacement: null, trunk_compensation: null, pelvic_compensation: null, major_balance_corrections: null };
   }
 
   function buildTrialRecord({ trial, sessionId, startedAt, endedAt, phoneSamples, cameraFrames }) {
@@ -509,7 +528,7 @@
 
   global.Assessment = {
     TRIALS, CONDITIONS, get REPETITIONS() { return REPETITIONS; }, get TRIAL_DURATION_SECONDS() { return TRIAL_DURATION_SECONDS; }, setProtocol, LANDMARK_INDEX, FULL_BODY_LANDMARKS,
-    fullBodyInFrame, landmarkVisible, frontalKneeDeviation,
+    fullBodyInFrame, landmarkVisible, frontalKneeDeviation, detectSingleLegTouchdowns,
     captureLandmarkFrame, capturePhoneSample,
     computePhoneMetrics, computePhoneNeutral, computeNeutralRelativeTilt, computeCameraMetrics, buildTrialRecord,
     computeComparisons, buildAssessmentJSON,
