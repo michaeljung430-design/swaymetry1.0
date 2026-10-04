@@ -116,12 +116,22 @@
         ['Camera side / measured leg', `${side.camera_side} / ${side.measured_leg}`],
         ['Side-view frames', `${side.frame_count} (${Math.round((side.knee_tracking_fraction ?? 0) * 100)}% knee usable)`],
         ['Mean knee flexion proxy', fmt(side.mean_knee_flexion_proxy_deg, '°')],
+        ['Most extended (least bend)', fmt(side.min_knee_flexion_proxy_deg, '°')],
         ['Max knee flexion proxy', fmt(side.max_knee_flexion_proxy_deg, '°')],
+        ['Knee bend range', fmt(side.knee_flexion_range_deg, '°')],
         ['Mean hip flexion proxy', fmt(side.mean_hip_flexion_proxy_deg, '°')],
         ['Mean trunk lean', fmt(side.mean_trunk_lean_deg, '°')],
         ['Horizontal hip excursion', fmt(side.horizontal_hip_excursion_body_heights, ' body heights', 3)],
       ]) + `<p class="status-line">${escapeHtml(side.note)} Facial landmarks are not drawn or transmitted from the iPad.</p>`;
     } else html += '<p>No iPad side-camera recording for this trial.</p>';
+
+    html += `<h4 class="results-group-heading">Computer front view · knee deviation</h4>`;
+    html += metricGrid([
+      ['Left mean (+ inward / − outward)', fmt(record.camera_posture?.left_knee?.mean_frontal_deviation_deg, '°')],
+      ['Left peak magnitude', fmt(record.camera_posture?.left_knee?.peak_frontal_deviation_deg, '°')],
+      ['Right mean (+ inward / − outward)', fmt(record.camera_posture?.right_knee?.mean_frontal_deviation_deg, '°')],
+      ['Right peak magnitude', fmt(record.camera_posture?.right_knee?.peak_frontal_deviation_deg, '°')],
+    ]) + '<p class="status-line">These are 2D projected valgus-like/varus-like deviations, not validated clinical varus/valgus angles. Camera rotation, limb rotation, and occlusion can alter the sign or size.</p>';
 
     html += `<h4 class="results-group-heading">Balance &amp; Movement</h4>`;
     html += regionSection('Balance & Stability', metricGrid([
@@ -368,7 +378,7 @@
 
   // ---- Public entry points ----
   function populateTrialSelect(selectEl, assessment) {
-    const done = Assessment.TRIALS.filter(t => assessment.trials[t.trial_name]?.status === 'completed');
+    const done = Assessment.TRIALS.filter(t => assessment.trials[t.trial_name]?.status === 'completed' && assessment.trials[t.trial_name]?.protocol_valid !== false && assessment.trials[t.trial_name]?.duration_seconds === Assessment.TRIAL_DURATION_SECONDS);
     selectEl.innerHTML = done.map(t => `<option value="${t.trial_name}">${escapeHtml(t.label)}</option>`).join('') || '<option value="">No completed trials yet</option>';
     if (done.length && !done.some(t => t.trial_name === currentTrialName)) currentTrialName = done[0].trial_name;
     if (currentTrialName) selectEl.value = currentTrialName;

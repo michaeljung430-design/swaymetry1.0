@@ -68,7 +68,9 @@
       usable_knee_frames: knee.length,
       knee_tracking_fraction: frames.length ? rounded(knee.length / frames.length) : 0,
       mean_knee_flexion_proxy_deg: rounded(mean(knee)),
+      min_knee_flexion_proxy_deg: knee.length ? rounded(Math.min(...knee)) : null,
       max_knee_flexion_proxy_deg: knee.length ? rounded(Math.max(...knee)) : null,
+      knee_flexion_range_deg: knee.length ? rounded(Math.max(...knee) - Math.min(...knee)) : null,
       knee_flexion_series: observations.filter(row => Number.isFinite(row.timestamp_seconds) && Number.isFinite(row.knee_flexion_proxy_deg)).map(row => ({ t:rounded(row.timestamp_seconds), value:rounded(row.knee_flexion_proxy_deg) })),
       mean_hip_flexion_proxy_deg: rounded(mean(hip)),
       max_hip_flexion_proxy_deg: hip.length ? rounded(Math.max(...hip)) : null,
@@ -108,6 +110,15 @@
       ctx.strokeStyle = '#f2b134'; ctx.lineWidth = 3; ctx.stroke();
     }
     limb(nearSide, '#f2b134', 4);
+    const dot = (point, color) => {
+      if (!point) return;
+      ctx.beginPath(); ctx.arc(point.x, point.y, 6, 0, Math.PI * 2);
+      ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+    };
+    dot(p('left_knee'), '#f2b134');
+    dot(p('right_knee'), '#f2b134');
+    dot(shoulders, '#f2b134');
+    dot(hips, '#0f9488');
   }
   global.SideView = { analyze, drawStick };
 })(typeof window !== 'undefined' ? window : globalThis);

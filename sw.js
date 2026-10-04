@@ -1,4 +1,4 @@
-const CACHE = 'motion-lab-v4-side-camera';
+const CACHE = 'motion-lab-v5-knee-angles';
 const ASSETS = [
   './',
   './index.html',

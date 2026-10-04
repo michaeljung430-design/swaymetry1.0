@@ -111,7 +111,9 @@
     #side-preview{pointer-events:none}
     .camera-grid .stage-caption{font-size:.8rem;margin:7px 2px 0}
     .trial-action-row{position:sticky;bottom:10px;z-index:12;margin:12px 0 6px;padding:8px;background:rgba(246,247,249,.96);border:1px solid var(--line);border-radius:var(--radius-md);box-shadow:var(--shadow-md)}
-    .trial-action-row #start-trial-button{width:100%;justify-content:center;padding:14px 18px;font-size:1rem}
+    .trial-action-row{display:grid;grid-template-columns:minmax(0,1fr) auto}
+    .trial-action-row #start-trial-button{justify-content:center;padding:14px 18px;font-size:1rem}
+    .trial-action-row #finish-assessment-button{grid-column:1/-1;justify-content:center}
     @media(max-width:620px){.camera-grid{grid-template-columns:minmax(0,1fr)}}
     .stage{position:relative;overflow:hidden;border-radius:var(--radius-xl);background:#0c1116;aspect-ratio:3/3.3;box-shadow:var(--shadow-md)}
     .stage video,.stage canvas{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover}
@@ -223,7 +225,9 @@
   <p id="rest-status" class="status-line">Rest 30–60 seconds between trials.</p>
   <section class="card" id="protocol-card">
     <strong>Standardized trial setup</strong>
-    <p>Keep the camera fixed, full body and both feet visible, phone firmly vertical at L5, footwear and marked foot positions unchanged. Stand upright with hands on hips; do not touch support. For each condition record three 30-second runs, resting 30–60 seconds between runs. Record any step, support touch, arm movement, early stop, or eyes opening as a protocol deviation.</p>
+    <p>Keep the camera fixed, full body and both feet visible, phone firmly vertical at L5, footwear and marked foot positions unchanged. Stand upright with hands on hips; do not touch support. Rest 30–60 seconds between runs. If a run has a step, support touch, arm movement, early stop, or eyes opening, use Redo trial.</p>
+    <div class="button-row"><label>Runs per condition <select id="protocol-repetitions"><option value="1">1 run</option><option value="2">2 runs</option><option value="3" selected>3 runs</option><option value="4">4 runs</option><option value="5">5 runs</option></select></label><label>Seconds per run <select id="protocol-duration"><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="20">20 seconds</option><option value="30" selected>30 seconds</option><option value="45">45 seconds</option><option value="60">60 seconds</option></select></label></div>
+    <p id="protocol-mode-note" class="status-line">Standard protocol: 3 runs × 30 seconds per condition.</p>
     <div class="button-row"><label>Computer camera view <select id="protocol-camera-view"><option value="front">Front</option></select></label><label>Anonymous participant code <input id="protocol-participant-code" autocomplete="off" placeholder="e.g. P001"></label></div>
     <label><input type="checkbox" id="require-side-camera"> Include iPad side camera in this session</label>
     <label><input type="checkbox" id="protocol-ready"> Setup checked for this session</label>
@@ -265,7 +269,7 @@
     <p id="side-view-hint" class="stage-caption">Scan the iPad QR code above to connect the side view.</p>
   </div>
   </div>
-  <div class="button-row trial-action-row"><button id="start-trial-button" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>Start trial</button></div>
+  <div class="button-row trial-action-row"><button id="start-trial-button" disabled><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>Start trial</button><button id="redo-trial-button" class="outline" type="button" disabled>Redo last trial</button><button id="finish-assessment-button" type="button" style="display:none">Finish assessment &amp; view results</button></div>
 
   <div class="status-row">
     <span class="chip" id="check-camera">Checking…</span>
@@ -300,7 +304,7 @@
 
   <section class="card" id="install-card" style="display:none"><strong>Install as an app</strong><p id="install-status">Checking this browser…</p><button class="outline" id="install-button" style="display:none">Install on this device</button></section>
   <section class="card" style="display:none"><strong>Environment</strong><dl id="environment"></dl></section>
-  <section class="card"><dl><dt>Tracker</dt><dd id="tracked">Waiting</dd><dt>Trunk lean</dt><dd id="trunk">—</dd><dt>Pelvic tilt</dt><dd id="pelvis">—</dd><dt>Knee angles</dt><dd id="knees">—</dd></dl></section>
+  <section class="card"><dl><dt>Tracker</dt><dd id="tracked">Waiting</dd><dt>Trunk lean</dt><dd id="trunk">—</dd><dt>Pelvic tilt</dt><dd id="pelvis">—</dd><dt>Front knee interior angles (L / R)</dt><dd id="knees">—</dd><dt>Front knee deviation (L / R)</dt><dd id="front-knee-deviation">—</dd><dt>Side knee bend / extension proxy</dt><dd id="side-knee-bend">—</dd></dl><p class="status-line">Knee values are 2D camera projections in degrees, not clinical 3D joint angles. Front: + = knee inward (valgus-like), − = outward (varus-like). Side: 0° ≈ projected straight; positive = bend. Hyperextension cannot be determined reliably. Keep cameras fixed and knees/ankles visible.</p></section>
   <section class="card">
     <strong>AddBiomechanics reference-data path</strong>
     <p>This browser records a phone trial and exports a transparent CSV. AddBiomechanics reference files are <code>.b3d</code> / OpenSim outputs and require a server-side conversion or model-training pipeline; they cannot be read directly by a self-contained browser page.</p>
@@ -317,7 +321,7 @@
   <div id="results-view" style="display:none">
     <section class="card" id="assessment-results-card">
       <strong>Assessment Results (AI Summary)</strong>
-      <p id="results-status">Complete all 18 trials to see the session analysis here.</p>
+      <p id="results-status">Complete the selected runs, then choose Finish assessment to see the session analysis here.</p>
       <div id="condition-means"></div>
       <div id="results-body"></div>
       <div id="failed-history-list"></div>
@@ -377,7 +381,7 @@
     let message; try { message = JSON.parse(event.data); } catch { return; }
     if (message.type === 'peer' && message.role === 'side') {
       pair.sidePeer = !!message.connected;
-      if (!message.connected) { pair.sideReady = false; $('side-video-preview').removeAttribute('src'); $('side-video-preview').style.display = 'none'; $('side-preview').getContext('2d').clearRect(0, 0, $('side-preview').width, $('side-preview').height); $('side-view-hint').textContent = 'iPad disconnected. Open the QR pairing link again.'; }
+      if (!message.connected) { pair.sideReady = false; $('side-knee-bend').textContent='—'; $('side-video-preview').removeAttribute('src'); $('side-video-preview').style.display = 'none'; $('side-preview').getContext('2d').clearRect(0, 0, $('side-preview').width, $('side-preview').height); $('side-view-hint').textContent = 'iPad disconnected. Open the QR pairing link again.'; }
       $('side-camera-status').textContent = message.connected ? 'iPad joined. Waiting for body tracking…' : 'iPad disconnected.';
       if (message.connected) { $('side-view-hint').textContent = 'iPad connected. Waiting for its front camera…'; $('side-camera-card').open = false; }
     }
@@ -399,7 +403,10 @@
         const canvas = $('side-preview'); canvas.width = frame.image_width; canvas.height = frame.image_height;
         $('side-live-stage').style.aspectRatio = `${frame.image_width}/${frame.image_height}`;
         SideView.drawStick(canvas.getContext('2d'), frame.landmarks, canvas.width, canvas.height, sideCameraFacing);
-        if (message.type === 'pose' && trialRecording && sideFrameBuffer.length < 600) sideFrameBuffer.push(frame);
+        const sideTrial=Assessment.TRIALS.find(t=>t.id===activeTrialId)||null;
+        const sideKnee=SideView.analyze([frame],sideTrial,sideCameraFacing);
+        $('side-knee-bend').textContent=sideKnee.mean_knee_flexion_proxy_deg==null?'— (knee not visible)':`${sideKnee.measured_leg} knee: ${sideKnee.mean_knee_flexion_proxy_deg.toFixed(1)}° bend from projected straight`;
+        if (message.type === 'pose' && trialRecording && sideFrameBuffer.length < 1200) sideFrameBuffer.push(frame);
       }
     }
   }
@@ -451,7 +458,7 @@
   function poseVertical(a,b) { return Math.abs(poseDeg(Math.atan2(b.x-a.x,a.y-b.y))); }
   function midpoint(a,b) { return {x:(a.x+b.x)/2,y:(a.y+b.y)/2}; }
   function poseVisible(p) { return p && p.visibility > .45; }
-  function poseMetrics(l) { const lh=l[23],rh=l[24],ls=l[11],rs=l[12],lk=l[25],rk=l[26],la=l[27],ra=l[28]; if (![lh,rh,ls,rs,lk,rk,la,ra].every(poseVisible)) return null; const hip=midpoint(lh,rh), sh=midpoint(ls,rs), bodyWidth=Math.hypot(ls.x-rs.x,ls.y-rs.y)||.1; return {hip,bodyWidth,trunk:poseVertical(hip,sh),pelvis:Math.abs(poseTilt(lh,rh)),leftKnee:poseAngle(lh,lk,la),rightKnee:poseAngle(rh,rk,ra),leftAnkle:la,rightAnkle:ra}; }
+  function poseMetrics(l) { const lh=l[23],rh=l[24],ls=l[11],rs=l[12],lk=l[25],rk=l[26],la=l[27],ra=l[28]; if (![lh,rh,ls,rs,lk,rk,la,ra].every(poseVisible)) return null; const hip=midpoint(lh,rh), sh=midpoint(ls,rs), bodyWidth=Math.hypot(ls.x-rs.x,ls.y-rs.y)||.1; return {hip,bodyWidth,trunk:poseVertical(hip,sh),pelvis:Math.abs(poseTilt(lh,rh)),leftKnee:poseAngle(lh,lk,la),rightKnee:poseAngle(rh,rk,ra),leftFrontalKnee:Assessment.frontalKneeDeviation(lh,lk,la,rh,video.videoWidth,video.videoHeight),rightFrontalKnee:Assessment.frontalKneeDeviation(rh,rk,ra,lh,video.videoWidth,video.videoHeight),leftAnkle:la,rightAnkle:ra}; }
   function drawPhoneIndicator(octx, hip) {
     if (!hip) return;
     const r = checkReadinessNow();
@@ -476,15 +483,27 @@
     const octx=overlay.getContext('2d');
     octx.clearRect(0,0,overlay.width,overlay.height);
     if (!l) return;
-    SideView.drawStick(octx,l,overlay.width,overlay.height,'left');
-    const lh=l[23], rh=l[24];
-    const hip = (lh && rh && (lh.visibility==null||lh.visibility>.4) && (rh.visibility==null||rh.visibility>.4)) ? {x:(lh.x+rh.x)/2,y:(lh.y+rh.y)/2} : null;
-    drawPhoneIndicator(octx, hip);
+    const point=index=>{const p=l[index];return p&&(p.visibility==null||p.visibility>.4)?{x:p.x*overlay.width,y:p.y*overlay.height}:null;};
+    const line=(a,b,color='#0f9488',width=3)=>{const x=point(a),y=point(b);if(!x||!y)return;octx.beginPath();octx.moveTo(x.x,x.y);octx.lineTo(y.x,y.y);octx.strokeStyle=color;octx.lineWidth=width;octx.lineCap='round';octx.stroke();};
+    const ls=point(11),rs=point(12),lh=point(23),rh=point(24);
+    if (ls&&rs&&lh&&rh) {
+      octx.beginPath();octx.moveTo(ls.x,ls.y);octx.lineTo(rs.x,rs.y);octx.lineTo(rh.x,rh.y);octx.lineTo(lh.x,lh.y);octx.closePath();
+      octx.fillStyle='rgba(15,148,136,.13)';octx.fill();octx.strokeStyle='#0f9488';octx.lineWidth=4;octx.stroke();
+    }
+    for (const [a,b] of [[11,13],[13,15],[12,14],[14,16],[23,25],[25,27],[27,29],[29,31],[24,26],[26,28],[28,30],[30,32]]) line(a,b);
+    const midpoint=(a,b)=>a&&b?{x:(a.x+b.x)/2,y:(a.y+b.y)/2}:null;
+    const shoulderCenter=midpoint(ls,rs), hipCenter=midpoint(lh,rh);
+    if (shoulderCenter&&hipCenter) {octx.beginPath();octx.moveTo(shoulderCenter.x,shoulderCenter.y);octx.lineTo(hipCenter.x,hipCenter.y);octx.strokeStyle='#f2b134';octx.lineWidth=2;octx.stroke();}
+    if (shoulderCenter&&ls&&rs) {const radius=Math.max(8,Math.hypot(ls.x-rs.x,ls.y-rs.y)*.18);octx.beginPath();octx.arc(shoulderCenter.x,shoulderCenter.y-radius*1.8,radius,0,Math.PI*2);octx.strokeStyle='#f2b134';octx.lineWidth=3;octx.stroke();}
+    const mark=(p,color,radius=6,fill=true)=>{if(!p)return;octx.beginPath();octx.arc(p.x,p.y,radius,0,Math.PI*2);octx.fillStyle=fill?color:'transparent';if(fill)octx.fill();octx.strokeStyle='#fff';octx.lineWidth=2;octx.stroke();};
+    drawPhoneIndicator(octx,hipCenter?{x:hipCenter.x/overlay.width,y:hipCenter.y/overlay.height}:null);
+    mark(point(25),'#f2b134');mark(point(26),'#f2b134');
+    mark(shoulderCenter,'#f2b134');mark(hipCenter,'#0f9488',8,false);
   }
   function updateCameraScore(hip) { const magnitude=Math.hypot(hip.x,hip.y); poseBaseline.push(magnitude); if(poseBaseline.length>45) poseBaseline.shift(); const m=poseBaseline.reduce((s,n)=>s+n,0)/poseBaseline.length; cameraScore=Math.min(100,Math.abs(magnitude-m)*900); $('camera-score').textContent=`${cameraScore.toFixed(1)} / 100`; }
-  function updateLivePose() { const m=landmarks&&poseMetrics(landmarks); if (!m) { $('tracked').textContent='No full body'; return null; } $('tracked').textContent='33 body landmarks'; $('trunk').textContent=`${m.trunk.toFixed(1)}°`; $('pelvis').textContent=`${m.pelvis.toFixed(1)}°`; $('knees').textContent=`${m.leftKnee.toFixed(0)}° / ${m.rightKnee.toFixed(0)}°`; updateCameraScore(m.hip); return m; }
+  function updateLivePose() { const m=landmarks&&poseMetrics(landmarks); if (!m) { $('tracked').textContent='No full body'; $('front-knee-deviation').textContent='—'; return null; } $('tracked').textContent='33 body landmarks'; $('trunk').textContent=`${m.trunk.toFixed(1)}°`; $('pelvis').textContent=`${m.pelvis.toFixed(1)}°`; $('knees').textContent=`${m.leftKnee.toFixed(0)}° / ${m.rightKnee.toFixed(0)}°`; const label=v=>v==null?'—':`${v>=0?'+':''}${v.toFixed(1)}° ${v>0?'inward':v<0?'outward':'neutral'}`; $('front-knee-deviation').textContent=`${label(m.leftFrontalKnee)} / ${label(m.rightFrontalKnee)}`; updateCameraScore(m.hip); return m; }
   function formCheck() { const m=updateLivePose(); if (!m) { $('form-result').style.display='block'; $('form-result').textContent='Stand fully in the camera frame first.'; return; } formBaseline=m; const notes=[]; if (m.trunk>8) notes.push('reduce trunk lean'); if (m.pelvis>6) notes.push('level the pelvis'); if (m.leftKnee<155||m.rightKnee<155) notes.push('stand tall without a deep knee bend'); $('form-result').style.display='block'; $('form-result').textContent=notes.length?`Form check: ${notes.join('; ')}.`:'Form check passed: upright, level posture detected.'; }
-  function onPoseResults(r) { landmarks=r.poseLandmarks||null; drawSkeleton(landmarks); updateLivePose(); if (trialRecording) cameraFrameBuffer.push(Assessment.captureLandmarkFrame(landmarks, (performance.now()-trialStartPerf)/1000)); }
+  function onPoseResults(r) { landmarks=r.poseLandmarks||null; drawSkeleton(landmarks); updateLivePose(); if (trialRecording) { const frame=Assessment.captureLandmarkFrame(landmarks, (performance.now()-trialStartPerf)/1000); frame.image_width=video.videoWidth; frame.image_height=video.videoHeight; cameraFrameBuffer.push(frame); } }
   function detectLoop() { if (!stream) return; if (poseTracker && !detecting && video.readyState>=2) { detecting=true; poseTracker.send({image:video}).catch(()=>{}).finally(()=>{detecting=false;}); } requestAnimationFrame(detectLoop); }
   function waitForPose(timeoutMs=6000) { return new Promise(resolve=>{ if (typeof Pose!=='undefined') return resolve(true); const started=performance.now(); const check=()=>{ if (typeof Pose!=='undefined') return resolve(true); if (performance.now()-started>timeoutMs) return resolve(false); setTimeout(check,150); }; check(); }); }
   function updateImuScore(sample) { const magnitude=Math.hypot(sample.x,sample.y,sample.z); baseline.push(magnitude); if(baseline.length>45) baseline.shift(); const mean=baseline.reduce((s,n)=>s+n,0)/baseline.length; imuScore=Math.min(100,Math.abs(magnitude-mean)*18); $('imu-score').textContent=`${imuScore.toFixed(1)} / 100`; }
@@ -524,7 +543,31 @@
   $('form-button').onclick=formCheck;
   function loadAssessment() { try { const raw=localStorage.getItem('assessment-current'); if (raw) { const parsed=JSON.parse(raw); if (parsed && parsed.trials) return parsed; } } catch {} return { assessment_id: crypto.randomUUID(), date: new Date().toISOString(), trials: {} }; }
   function saveCurrentAssessment() { try { localStorage.setItem('assessment-current', JSON.stringify(currentAssessment)); } catch {} }
-  function completedTrialNames() { return Object.keys(currentAssessment.trials).filter(k => currentAssessment.trials[k]?.status === 'completed' && currentAssessment.trials[k]?.protocol_valid !== false); }
+  function currentProtocol() { return { repetitions: Assessment.REPETITIONS, duration_seconds: Assessment.TRIAL_DURATION_SECONDS }; }
+  function applyProtocol(repetitions, durationSeconds) {
+    Assessment.setProtocol({ repetitions, durationSeconds });
+    $('protocol-repetitions').value=String(repetitions);
+    $('protocol-duration').value=String(durationSeconds);
+    $('protocol-mode-note').textContent=repetitions===3&&durationSeconds===30
+      ? 'Standard protocol: 3 runs × 30 seconds per condition.'
+      : `Test settings: ${repetitions} run${repetitions===1?'':'s'} × ${durationSeconds} seconds per condition. Do not compare these directly with 3 × 30-second baselines.`;
+    currentAssessment.protocol=currentProtocol();
+    saveCurrentAssessment();
+  }
+  function completedTrialNames() {
+    const selected=new Set(Assessment.TRIALS.map(trial=>trial.trial_name));
+    return Object.keys(currentAssessment.trials).filter(name=>selected.has(name)&&currentAssessment.trials[name]?.status==='completed'&&currentAssessment.trials[name]?.protocol_valid!==false&&currentAssessment.trials[name]?.duration_seconds===Assessment.TRIAL_DURATION_SECONDS);
+  }
+  function redoTarget() {
+    if (activeTrialId && completedTrialNames().includes(activeTrialId)) return activeTrialId;
+    const done=new Set(completedTrialNames());
+    return Object.keys(currentAssessment.trials).filter(name=>done.has(name)).sort((a,b)=>String(currentAssessment.trials[b]?.ended_at||'').localeCompare(String(currentAssessment.trials[a]?.ended_at||'')))[0]||null;
+  }
+  function updateRedoButton() {
+    const target=redoTarget();
+    $('redo-trial-button').disabled=trialRecording||!target;
+    $('redo-trial-button').textContent=target&&target===activeTrialId?'Redo selected trial':'Redo last trial';
+  }
   function loadHistory() { try { return JSON.parse(localStorage.getItem('assessment-history') || '[]'); } catch { return []; } }
   function saveToHistory(assessmentJson, analysis) {
     const history=loadHistory();
@@ -560,7 +603,9 @@
     });
     $('assessment-progress-text').textContent=`${doneNames.length}/${Assessment.TRIALS.length} completed`;
     $('assessment-progress-bar').style.width=`${(doneNames.length/Assessment.TRIALS.length)*100}%`;
-    if (doneNames.length===Assessment.TRIALS.length && !currentAssessment.analyzed) runFullAnalysis();
+    if (!currentAssessment.analyzed) $('results-status').textContent=`Complete ${Assessment.TRIALS.length} selected runs, then choose Finish assessment to see the session analysis here.`;
+    $('finish-assessment-button').style.display=doneNames.length===Assessment.TRIALS.length&&!currentAssessment.analyzed?'inline-flex':'none';
+    updateRedoButton();
   }
   function selectTrial(trialName) {
     if (trialRecording) return;
@@ -575,6 +620,7 @@
     $('start-trial-button').disabled=true;
     $('start-trial-button').textContent='Start trial';
     renderChecklist();
+    updateRedoButton();
     startReadinessPolling();
   }
   function selectNextIncompleteTrial() {
@@ -607,7 +653,8 @@
     $('check-side').textContent=r.sideOk?'iPad side camera ready':r.sideRequired?'iPad side camera required':'iPad side camera optional';
     $('check-side').className=`chip ${r.sideOk?'ok':r.sideRequired?'bad':''}`;
     $('rest-status').textContent=r.restRemaining ? `Rest before the next trial: ${r.restRemaining} seconds remaining (30-second minimum).` : 'Rest interval complete. Keep setup and foot positions unchanged.';
-    $('start-trial-button').disabled=!(r.cameraOk&&r.phoneOk&&(!r.sideRequired||r.sideOk)&&$('protocol-ready').checked&&r.restRemaining===0);
+    $('start-trial-button').disabled=!(activeTrialId&&r.cameraOk&&r.phoneOk&&(!r.sideRequired||r.sideOk)&&$('protocol-ready').checked&&r.restRemaining===0&&!completedTrialNames().includes(activeTrialId));
+    updateRedoButton();
   }
   function startReadinessPolling() {
     if (readinessPoll) clearInterval(readinessPoll);
@@ -618,9 +665,34 @@
   $('start-trial-button').onclick=()=>{
     if (Date.now()<restUntil) return;
     if (!$('protocol-ready').checked) { log('Check the standardized setup before recording.','warn'); return; }
-    if (currentAssessment.trials[activeTrialId]?.status==='completed' && !confirm('This trial already has recorded data. Re-recording it will permanently replace that data. Continue?')) return;
+    if (!activeTrialId || completedTrialNames().includes(activeTrialId)) return;
     clearInterval(readinessPoll); runCountdown();
   };
+  $('redo-trial-button').onclick=()=>{
+    if (trialRecording) return;
+    const target=redoTarget(); if (!target) return;
+    const previous=currentAssessment.trials[target];
+    previous.status='needs_redo'; previous.protocol_valid=false;
+    previous.redo_requested_at=new Date().toISOString();
+    currentAssessment.analyzed=false;
+    saveCurrentAssessment();
+    selectTrial(target);
+    $('trial-live-status').style.display='inline';
+    $('trial-live-status').textContent='Previous attempt set aside. Record this trial again after the rest period.';
+    log(`Marked ${target} for redo; previous measurements retained until the replacement run is complete.`);
+  };
+  $('finish-assessment-button').onclick=()=>{
+    if (!trialRecording && completedTrialNames().length===Assessment.TRIALS.length && !currentAssessment.analyzed) runFullAnalysis();
+  };
+  function updateProtocolFromMenus() {
+    if (trialRecording) return;
+    const repetitions=Number($('protocol-repetitions').value), durationSeconds=Number($('protocol-duration').value);
+    applyProtocol(repetitions,durationSeconds);
+    currentAssessment.analyzed=false; saveCurrentAssessment();
+    renderChecklist(); selectNextIncompleteTrial(); refreshTrialAnalysisView();
+  }
+  $('protocol-repetitions').onchange=updateProtocolFromMenus;
+  $('protocol-duration').onchange=updateProtocolFromMenus;
   function runCountdown() {
     $('start-trial-button').disabled=true;
     try { audioContext ||= new (window.AudioContext||window.webkitAudioContext)(); audioContext.resume?.(); } catch {}
@@ -664,6 +736,7 @@
   }
   function beginTrialRecording() {
     trialRecording=true;
+    $('protocol-repetitions').disabled=true; $('protocol-duration').disabled=true;
     phoneSampleBuffer=[]; cameraFrameBuffer=[]; sideFrameBuffer=[];
     trialStartPerf=performance.now();
     const startedAt=new Date().toISOString();
@@ -682,6 +755,7 @@
   function finishActiveTrial(startedAt) {
     clearInterval(trialTimer);
     trialRecording=false;
+    $('protocol-repetitions').disabled=false; $('protocol-duration').disabled=false;
     sendPair({type:'control',action:'stop'});
     const trial=Assessment.TRIALS.find(t=>t.trial_name===activeTrialId);
     const record=Assessment.buildTrialRecord({trial,sessionId:currentAssessment.assessment_id,startedAt,endedAt:new Date().toISOString(),phoneSamples:phoneSampleBuffer,cameraFrames:cameraFrameBuffer});
@@ -689,13 +763,14 @@
     if (record.phone_acceleration_source==='including_gravity') record.measurement_notes.phone_total_sway+=' This trial used the gravity-including fallback; magnitude includes ~9.81 m/s² at rest.';
     record.protocol_context={camera_view:'front',side_camera_requested:$('require-side-camera').checked,side_camera_connected:sideFrameBuffer.length>0,side_camera_facing:sideCameraFacing,phone_placement:'L5 vertical',participant_code:$('protocol-participant-code').value.trim()||null,recording_start_iso:startedAt};
     record.side_camera=sideFrameBuffer.length ? SideView.analyze(sideFrameBuffer,trial,sideCameraFacing) : null;
-    record.protocol_context.side_capture_complete=!!record.side_camera && record.side_camera.frame_count>=100 && record.side_camera.covered_seconds>=25 && record.side_camera.knee_tracking_fraction>=0.5 && (record.side_camera.first_frame_seconds ?? 99)<=3 && (record.side_camera.last_frame_seconds ?? 0)>=27;
+    const duration=Assessment.TRIAL_DURATION_SECONDS;
+    record.protocol_context.side_capture_complete=!!record.side_camera && record.side_camera.frame_count>=Math.max(10,duration*3) && record.side_camera.covered_seconds>=duration*0.8 && record.side_camera.knee_tracking_fraction>=0.5 && (record.side_camera.first_frame_seconds ?? 99)<=Math.max(1,duration*0.1) && (record.side_camera.last_frame_seconds ?? 0)>=duration*0.8;
     record.sync_marker={app_time_seconds:0,type:'audible_start_tone',reference_observed:false};
     try {
       record.interpreted=Interpretation.analyzeTrial(cameraFrameBuffer,phoneSampleBuffer,{trial_name:trial.trial_name,stance:trial.stance,tested_leg:trial.tested_leg,eyes:trial.eyes,duration_seconds:Assessment.TRIAL_DURATION_SECONDS},{cameraOrientation:$('protocol-camera-view').value});
       record.interpreted.movement_summary=Interpretation.generateMovementSummary(record.interpreted);
     } catch (error) { log(`Interpretation pipeline failed for ${trial.trial_name}: ${error.message}`,'warn'); }
-    record.protocol_valid=!confirm('Did a protocol error occur in this trial? Select OK for a step, support touch, hands leaving hips, eyes opening in an eyes-closed trial, or an early stop. This run will be excluded from three-run means. Select Cancel if none occurred.');
+    record.protocol_valid=true;
     if (record.protocol_context.side_camera_requested && !record.protocol_context.side_capture_complete) {
       record.protocol_valid=false;
       log('Required iPad side recording was incomplete; repeat this trial.','warn');
@@ -705,7 +780,7 @@
     restUntil=Date.now()+30_000;
     saveCurrentAssessment();
     RawStore.saveRawTrial(record.trial_id,{trial_name:trial.trial_name,cameraFrames:cameraFrameBuffer,sideFrames:sideFrameBuffer,phoneSamples:phoneSampleBuffer}).catch(error=>log(`Could not save raw trial data: ${error.message}`,'warn'));
-    $('trial-live-status').textContent=`Complete: ${cameraFrameBuffer.length} front frames, ${sideFrameBuffer.length} side frames, ${phoneSampleBuffer.length} phone samples.`;
+    $('trial-live-status').textContent=`Complete: ${cameraFrameBuffer.length} front frames, ${sideFrameBuffer.length} side frames, ${phoneSampleBuffer.length} phone samples. Use Redo last trial if there was an error.`;
     log(`Trial complete: ${trial.trial_name}. ${cameraFrameBuffer.length} front frames, ${sideFrameBuffer.length} side frames, ${phoneSampleBuffer.length} phone samples.`);
     completionTone();
     activeTrialId=null;
@@ -724,15 +799,16 @@
       const camera=block.within_session_repeatability.camera_image_plane_path_normalized_units;
       const side=block.within_session_repeatability.side_knee_flexion_proxy_degrees;
       const cell=value=>value==null?'—':Number(value).toFixed(3);
-      return `<tr><td>${escapeHtml(condition.label)}</td><td>${block.completed_repetitions}/3</td><td>${cell(phone.mean)} ± ${cell(phone.sd)} m/s²</td><td>${cell(camera.mean)} ± ${cell(camera.sd)} normalized units</td><td>${side.n ? `${cell(side.mean)} ± ${cell(side.sd)}° (${side.n} runs)` : '—'}</td><td>${block.excluded_protocol_error_repetitions}</td></tr>`;
+      const frontal=block.camera_posture;
+      return `<tr><td>${escapeHtml(condition.label)}</td><td>${block.completed_repetitions}/${Assessment.REPETITIONS}</td><td>${cell(phone.mean)} ± ${cell(phone.sd)} m/s²</td><td>${cell(camera.mean)} ± ${cell(camera.sd)} normalized units</td><td>${frontal.left_knee.mean_frontal_deviation_deg==null?'—':`${cell(frontal.left_knee.mean_frontal_deviation_deg)}°`}</td><td>${frontal.right_knee.mean_frontal_deviation_deg==null?'—':`${cell(frontal.right_knee.mean_frontal_deviation_deg)}°`}</td><td>${side.n ? `${cell(side.mean)} ± ${cell(side.sd)}° (${side.n} runs)` : '—'}</td><td>${block.excluded_protocol_error_repetitions}</td></tr>`;
     }).join('');
-    $('condition-means').innerHTML=`<h4>Three-run condition averages</h4><div class="table-wrap"><table class="summary-table"><thead><tr><th>Condition</th><th>Valid runs</th><th>Phone RMS acceleration (mean ± SD)</th><th>Front camera image-plane path (mean ± SD)</th><th>iPad side knee-flexion proxy (mean ± SD)</th><th>Protocol errors excluded</th></tr></thead><tbody>${rows}</tbody></table></div><p class="status-line">These are within-session descriptive values, not validated normal ranges. Front and side camera views, phone acceleration, lab center of mass, and force-plate center of pressure are distinct measures.</p>`;
+    $('condition-means').innerHTML=`<h4>${Assessment.REPETITIONS}-run condition averages</h4><div class="table-wrap"><table class="summary-table"><thead><tr><th>Condition</th><th>Valid runs</th><th>Phone RMS acceleration (mean ± SD)</th><th>Front camera image-plane path (mean ± SD)</th><th>Front left knee deviation</th><th>Front right knee deviation</th><th>iPad side knee-flexion proxy (mean ± SD)</th><th>Protocol errors excluded</th></tr></thead><tbody>${rows}</tbody></table></div><p class="status-line">Front knee deviation: + inward/valgus-like, − outward/varus-like. All knee degrees here are 2D camera projections, not validated clinical angles. These are within-session descriptive values, not normal ranges; phone acceleration and force-plate center of pressure are distinct measures.</p>`;
   }
   async function runFullAnalysis() {
     currentAssessment.analyzed=true; saveCurrentAssessment();
     showView('results');
     refreshTrialAnalysisView();
-    $('results-status').textContent='All 18 trials complete. Calculating three-run condition means and sending for analysis…';
+    $('results-status').textContent=`All ${Assessment.TRIALS.length} trials complete. Calculating ${Assessment.REPETITIONS}-run condition means and sending for analysis…`;
     $('results-body').innerHTML='';
     const trials=Assessment.TRIALS.map(t=>currentAssessment.trials[t.trial_name]);
     const assessmentJson=Assessment.buildAssessmentJSON({assessmentId:currentAssessment.assessment_id,patientId:$('protocol-participant-code').value.trim()||null,date:currentAssessment.date,assessmentNumber:loadHistory().length+1,trials});
@@ -746,7 +822,7 @@
       saveToHistory(assessmentJson,analysis);
       $('results-status').textContent='Assessment complete.';
     } catch (error) {
-      $('results-status').textContent=`Assessment saved, but AI analysis failed: ${error.message}. Your 18 trials and their measurements are safely stored.`;
+      $('results-status').textContent=`Assessment saved, but AI analysis failed: ${error.message}. Your ${Assessment.TRIALS.length} trials and their measurements are safely stored.`;
       log(`AI analysis failed — ${error.message}`,'warn');
       saveToHistory(assessmentJson,null);
     }
@@ -910,7 +986,13 @@
   $('protocol-ready').onchange = () => { if (!trialRecording) updateReadinessDisplay(checkReadinessNow()); };
   $('require-side-camera').onchange = () => { if (!trialRecording) updateReadinessDisplay(checkReadinessNow()); };
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
-  if (pair.mode!=='camera') { const cc=$('checklist-card'); if (cc) cc.style.display='none'; $('side-camera-card').style.display='none'; $('side-view-column').style.display='none'; $('camera-grid').classList.add('sensor-only'); } else { currentAssessment=loadAssessment(); renderChecklist(); selectNextIncompleteTrial(); }
+  if (pair.mode!=='camera') { const cc=$('checklist-card'); if (cc) cc.style.display='none'; $('side-camera-card').style.display='none'; $('side-view-column').style.display='none'; $('camera-grid').classList.add('sensor-only'); } else {
+    currentAssessment=loadAssessment();
+    const saved=currentAssessment.protocol||{};
+    try { applyProtocol(Number(saved.repetitions)||3,Number(saved.duration_seconds)||30); }
+    catch { applyProtocol(3,30); }
+    renderChecklist(); selectNextIncompleteTrial();
+  }
   $('copy-side-link').onclick = async () => {
     const link = sideCameraLink();
     try { await navigator.clipboard.writeText(link); $('side-camera-status').textContent='iPad link copied. Open it in Safari on the iPad.'; }
