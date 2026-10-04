@@ -118,6 +118,12 @@
     .modal-close{position:absolute;top:10px;right:12px;background:transparent;color:var(--muted);border:0;font-size:1.3rem;line-height:1;padding:4px;margin:0}
     .modal-close:hover{color:var(--ink)}
     .qr-box{display:inline-block;background:#fff;border:1px solid var(--line);border-radius:var(--radius-md);padding:10px;margin:6px 0}
+    .qr-box svg{display:block;max-width:100%;height:auto}
+    .pairing-qr-panel{text-align:center;padding:12px;background:#f7faf9;border:1px solid var(--line);border-radius:var(--radius-md);margin:12px 0}
+    .pairing-qr-panel p{margin:5px auto;max-width:360px}
+    .pairing-advanced{margin-top:14px;text-align:left}
+    .pairing-advanced summary{font-size:.84rem}
+    .pairing-advanced button{margin-top:8px}
     .modal-hint{font-size:.82rem}
     .modal-box label{font-size:.82rem;text-align:left;display:block;margin-top:10px}
 
@@ -213,9 +219,12 @@
   </section>
   <section class="card" id="side-camera-card">
     <strong>iPad sagittal camera</strong>
-    <p>On the iPad, open the side-camera link in Safari, choose which side faces the iPad, tap Enable iPad camera, and keep the whole body visible. The computer controls trial start and stop. Only pose landmarks are transmitted; video stays on the iPad.</p>
-    <div class="button-row"><button class="outline" id="copy-side-link">Copy iPad camera link</button></div>
-    <div id="side-qr" class="qr-box" style="display:inline-block"></div>
+    <p>Scan this code with the iPad Camera app, then open the link in Safari. The code pairs the iPad to this session automatically; no relay address needs to be entered.</p>
+    <div class="pairing-qr-panel">
+      <div id="side-qr" class="qr-box" role="img" aria-label="QR code for iPad side camera"></div>
+      <p class="modal-hint">On the iPad, choose the side facing the camera, then tap Enable iPad camera and allow access.</p>
+    </div>
+    <div class="button-row"><button class="outline" id="copy-side-link">Copy iPad link instead</button></div>
     <p id="side-camera-status" class="status-line">Not connected. The front-only protocol still works when the iPad option is off.</p>
     <canvas id="side-preview" width="320" height="240" style="display:block;width:100%;max-width:320px;height:auto;background:#101820;border-radius:12px"></canvas>
     <p class="status-line">Side-view stick figure and angle estimates are 2D projections, not 3D motion capture.</p>
@@ -251,13 +260,19 @@
       <h3>Connect the iPhone sensor</h3>
       <p id="pairing-status">Use a laptop/tablet as the camera station and the iPhone as the wearable sensor.</p>
       <div id="pair-qr-wrap" style="display:none">
-        <div class="qr-box" id="pair-qr"></div>
-        <p class="modal-hint">Scan with the iPhone camera to open the sensor link.</p>
+        <div class="pairing-qr-panel">
+          <div class="qr-box" id="pair-qr" role="img" aria-label="QR code for L5 phone sensor"></div>
+          <p class="modal-hint">Scan with the phone Camera app, open the link in Safari, then tap Enable phone motion. No relay address is needed.</p>
+        </div>
       </div>
       <div id="pairing-actions"></div>
-      <label for="relay-url">Relay address</label>
-      <input id="relay-url" type="url" placeholder="wss://your-relay.example.com">
       <p id="pairing-detail" style="font-size:.82rem"></p>
+      <details class="pairing-advanced">
+        <summary>Connection settings (only if pairing fails)</summary>
+        <label for="relay-url">Relay address</label>
+        <input id="relay-url" type="url" placeholder="wss://your-relay.example.com">
+        <button class="secondary" id="connect-relay">Reconnect camera station</button>
+      </details>
     </div>
   </div>
 
@@ -332,7 +347,7 @@
   const PUBLIC_BASE='https://kinetic-ai-4.onrender.com';
   function pairingLink(){const relay=encodeURIComponent($('relay-url').value.trim());return `${PUBLIC_BASE}/movement-sensor-diagnostics.html?mode=sensor&session=${pair.session}&relay=${relay}`;}
   function sideCameraLink(){const relay=encodeURIComponent($('relay-url').value.trim());return `${PUBLIC_BASE}/side-camera.html?session=${pair.session}&relay=${relay}`;}
-  function updateSideQr(){const box=$('side-qr');if(!box||pair.mode!=='camera')return;try{const qr=qrcode(0,'M');qr.addData(sideCameraLink());qr.make();box.innerHTML=qr.createSvgTag({cellSize:3,margin:6});}catch(error){box.textContent=`QR unavailable: ${error.message}`;}}
+  function updateSideQr(){const box=$('side-qr');if(!box||pair.mode!=='camera')return;try{const qr=qrcode(0,'M');qr.addData(sideCameraLink());qr.make();box.innerHTML=qr.createSvgTag({cellSize:4,margin:6});}catch(error){box.textContent=`QR unavailable: ${error.message}`;}}
   function updateQr(){const wrap=$('pair-qr-wrap'),box=$('pair-qr');if(!wrap||!box||pair.mode!=='camera')return;const link=pairingLink();if(!$('relay-url').value.trim()){wrap.style.display='none';return;}try{const qr=qrcode(0,'M');qr.addData(link);qr.make();box.innerHTML=qr.createSvgTag({cellSize:4,margin:8});wrap.style.display='block';}catch(error){log(`QR generation failed — ${error.message}`,'warn');wrap.style.display='none';}}
   function sendPair(message){if(pair.socket?.readyState===WebSocket.OPEN)pair.socket.send(JSON.stringify({session:pair.session,...message}));}
   function handleSideMessage(event) {
@@ -366,7 +381,21 @@
       pair.socket.addEventListener('close', () => { pair.sidePeer = false; pair.sideReady = false; });
     }
   }
-  function renderPairing(){const defaultRelay=PUBLIC_BASE.replace('https://','wss://').replace('http://','ws://');const stored=localStorage.getItem('movement-relay')||query.get('relay')||defaultRelay;$('relay-url').value=stored;$('pairing-actions').innerHTML=pair.mode==='camera'?'<button id="connect-relay">Connect camera station</button><button class="secondary" id="copy-pair">Copy L5 sensor link</button>':'<button id="connect-relay">Connect L5 sensor</button>'; $('pairing-detail').textContent=pair.mode==='camera'?`Session ${pair.session}: copy the link (or scan the QR) on the L5 phone after connecting your relay.`:'This phone streams motion samples to the paired camera station.';$('connect-relay').onclick=connectRelayWithSide;if(pair.mode==='camera'){$('copy-pair').onclick=()=>navigator.clipboard.writeText(pairingLink()).then(()=>{$('pairing-detail').textContent='Sensor link copied. Open it on the L5 phone.';});$('relay-url').addEventListener('input',()=>{updateQr();updateSideQr();});updateQr();updateSideQr();}}
+  function renderPairing(){
+    const defaultRelay=PUBLIC_BASE.replace('https://','wss://').replace('http://','ws://');
+    // The scanned QR link must win over a stale relay saved on the receiving device.
+    const relay=query.get('relay')||localStorage.getItem('movement-relay')||defaultRelay;
+    $('relay-url').value=relay;
+    $('pairing-actions').innerHTML=pair.mode==='camera'?'<button class="secondary" id="copy-pair">Copy phone link instead</button>':'';
+    $('pairing-detail').textContent=pair.mode==='camera'?'The QR code includes this session’s connection details. Keep this page open while the phone joins.':'This phone streams motion samples to the paired camera station.';
+    $('connect-relay').textContent=pair.mode==='camera'?'Reconnect camera station':'Reconnect L5 sensor';
+    $('connect-relay').onclick=connectRelayWithSide;
+    if(pair.mode==='camera'){
+      $('copy-pair').onclick=()=>navigator.clipboard.writeText(pairingLink()).then(()=>{$('pairing-detail').textContent='Phone link copied. Open it in Safari on the L5 phone.';}).catch(()=>{$('pairing-detail').textContent=`Open this link on the L5 phone: ${pairingLink()}`;});
+      $('relay-url').addEventListener('input',()=>{updateQr();updateSideQr();});
+      updateQr();updateSideQr();
+    }
+  }
   const baseline = [], poseBaseline = [];
   function log(message, kind='') { const line = `[${new Date().toLocaleTimeString()}] ${message}`; logNode.textContent = line + '\n' + logNode.textContent; console.log(line); if (kind) console[kind](line); }
   function row(label, value, cls='') { const dt=document.createElement('dt'), dd=document.createElement('dd'); dt.textContent=label; dd.textContent=value; if(cls) dd.className=cls; envNode.append(dt,dd); return dd; }
