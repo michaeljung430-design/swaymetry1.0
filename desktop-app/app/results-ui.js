@@ -76,7 +76,7 @@
       ctx.fillStyle = '#178a4c'; ctx.beginPath(); ctx.arc(xOf(xs[0]), yOf(ys[0]), 4, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#c22a2a'; ctx.beginPath(); ctx.arc(xOf(xs[xs.length - 1]), yOf(ys[ys.length - 1]), 4, 0, Math.PI * 2); ctx.fill();
     }, 0);
-    return `<div class="chart-block"><small>Sway path (2D, stabilometry-style; green=start, red=end)</small><canvas id="${id}" width="300" height="240" style="width:100%;max-width:300px;height:240px;background:#fbfbfc;border-radius:10px"></canvas></div>`;
+    return `<div class="chart-block"><small>Image-plane body-center path (green=start, red=end; not force-plate CoP)</small><canvas id="${id}" width="300" height="240" style="width:100%;max-width:300px;height:240px;background:#fbfbfc;border-radius:10px"></canvas></div>`;
   }
 
   // ---- Interpreted Results ----
@@ -93,7 +93,7 @@
       ['Trial', r.trial_name.replace(/_/g, ' ')],
       ['Duration', `${o.duration_seconds}s`],
       ['Tracking quality', `${o.tracking_quality} (${Math.round((o.tracking_quality_fraction ?? 0) * 100)}%)`, o.tracking_quality === 'unreliable'],
-      ['Overall sway', fmt(o.overall_sway, ' units', 3)],
+      ['Camera body-center path (image normalized)', fmt(o.overall_sway, ' units', 3)],
       ['Max trunk lean', fmt(o.max_trunk_lean, '°')],
       ['Pelvic tilt range', fmt(o.pelvic_tilt_range, '°')],
       ['Left knee ROM', fmt(o.left_knee_rom, '°')],
@@ -102,16 +102,53 @@
       ['Asymmetry flagged', o.major_asymmetry_flagged ? 'Yes' : 'No', o.major_asymmetry_flagged],
     ])}</div>`;
     html += `<div class="movement-summary"><strong>Movement Summary</strong><ul>${(r.movement_summary || []).map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul></div>`;
+    html += `<h4 class="results-group-heading">L5 phone sensor (device coordinates)</h4>`;
+    html += metricGrid([
+      ['RMS acceleration magnitude', fmt(record.phone_balance?.total_sway, ' m/s²', 3)],
+      ['Mean acceleration-change rate (jerk proxy)', fmt(record.phone_balance?.mean_sway_velocity, ' m/s³', 3)],
+      ['Acceleration spike events', record.phone_balance?.large_corrections],
+    ]) + `<p class="status-line">Source: ${escapeHtml(record.phone_acceleration_source || 'unknown')}. These are phone acceleration measures, not lower-back displacement, body velocity, or force-plate center of pressure. The gravity-including fallback is not comparable with linear acceleration. Device x/y/z axes are not anatomical directions from a quiet-standing reference alone.</p>`;
+    const neutral=record.phone_neutral_relative_tilt;
+    html += `<h4 class="results-group-heading">Phone tilt relative to neutral standing</h4>`;
+    html += neutral?.available ? metricGrid([
+      ['Roll RMS from neutral', fmt(neutral.roll_rms_from_neutral_deg, '°', 2)],
+      ['Pitch RMS from neutral', fmt(neutral.pitch_rms_from_neutral_deg, '°', 2)],
+      ['Orientation samples', neutral.sample_count],
+    ]) + '<p class="status-line">These are phone orientation changes from the 5-second quiet-standing reference, not anatomical trunk angles. Raw motion measurements are unchanged.</p>' : `<p class="status-line">Unavailable: ${escapeHtml(neutral?.reason || 'Phone not calibrated for this trial.')}</p>`;
+
+    html += `<h4 class="results-group-heading">iPad sagittal view</h4>`;
+    if (record.side_camera) {
+      const side = record.side_camera;
+      html += metricGrid([
+        ['Camera side / measured leg', `${side.camera_side} / ${side.measured_leg}`],
+        ['Side-view frames', `${side.frame_count} (${Math.round((side.knee_tracking_fraction ?? 0) * 100)}% knee usable)`],
+        ['Mean knee flexion proxy', fmt(side.mean_knee_flexion_proxy_deg, '°')],
+        ['Most extended (least bend)', fmt(side.min_knee_flexion_proxy_deg, '°')],
+        ['Max knee flexion proxy', fmt(side.max_knee_flexion_proxy_deg, '°')],
+        ['Knee bend range', fmt(side.knee_flexion_range_deg, '°')],
+        ['Mean hip flexion proxy', fmt(side.mean_hip_flexion_proxy_deg, '°')],
+        ['Mean trunk lean', fmt(side.mean_trunk_lean_deg, '°')],
+        ['Horizontal hip excursion', fmt(side.horizontal_hip_excursion_body_heights, ' body heights', 3)],
+      ]) + `<p class="status-line">${escapeHtml(side.note)} Facial landmarks are not drawn or transmitted from the iPad.</p>`;
+    } else html += '<p>No iPad side-camera recording for this trial.</p>';
+
+    html += `<h4 class="results-group-heading">Computer front view · knee deviation</h4>`;
+    html += metricGrid([
+      ['Left mean (+ inward / − outward)', fmt(record.camera_posture?.left_knee?.mean_frontal_deviation_deg, '°')],
+      ['Left peak magnitude', fmt(record.camera_posture?.left_knee?.peak_frontal_deviation_deg, '°')],
+      ['Right mean (+ inward / − outward)', fmt(record.camera_posture?.right_knee?.mean_frontal_deviation_deg, '°')],
+      ['Right peak magnitude', fmt(record.camera_posture?.right_knee?.peak_frontal_deviation_deg, '°')],
+    ]) + '<p class="status-line">These are 2D projected valgus-like/varus-like deviations, not validated clinical varus/valgus angles. Camera rotation, limb rotation, and occlusion can alter the sign or size.</p>';
 
     html += `<h4 class="results-group-heading">Balance &amp; Movement</h4>`;
     html += regionSection('Balance & Stability', metricGrid([
-      ['Total sway path', fmt(r.balance_stability.total_sway_path, ' units', 3)],
-      ['Sway velocity', fmt(r.balance_stability.sway_velocity, ' units/s', 3)],
-      ['Max ML excursion', fmt(r.balance_stability.max_excursion_ml, ' units', 3)],
-      ['Max AP excursion', fmt(r.balance_stability.max_excursion_ap, ' units', 3)],
-      ['Sway area', fmt(r.balance_stability.sway_area, ' units²', 4)],
-    ]) + chartCard('Mediolateral sway over time', [{ samples: r.balance_stability.mediolateral_sway.samples, color: '#0f9488' }], 'normalized units')
-      + chartCard('Anterior/posterior sway over time', [{ samples: r.balance_stability.anterior_posterior_sway.samples, color: '#f2b134' }], 'normalized units')
+      ['Image-plane body-center path', fmt(r.balance_stability.total_sway_path, ' units', 3)],
+      ['Image-plane path speed', fmt(r.balance_stability.sway_velocity, ' units/s', 3)],
+      ['Max horizontal excursion', fmt(r.balance_stability.max_excursion_ml, ' units', 3)],
+      ['Max vertical excursion (not anatomical AP)', fmt(r.balance_stability.max_excursion_ap, ' units', 3)],
+      ['Image-plane 95% ellipse area (not CoP ellipse)', fmt(r.balance_stability.sway_area, ' units²', 4)],
+    ]) + '<p class="status-line">Camera movement is reported in image-normalized units, not centimeters. Keep camera distance and framing consistent between trials.</p>' + chartCard('Mediolateral sway over time', [{ samples: r.balance_stability.mediolateral_sway.samples, color: '#0f9488' }], 'normalized units')
+      + chartCard('Vertical image movement over time (not anatomical AP)', [{ samples: r.balance_stability.anterior_posterior_sway.samples, color: '#f2b134' }], 'normalized units')
       + swayPathCard(r.balance_stability.body_center_path), true);
 
     html += regionSection('Events Timeline', r.events_timeline.length ? `<ul class="events-list">${r.events_timeline.map(e => `<li><button class="event-jump" data-t="${e.timestamp_seconds}">${e.timestamp_seconds.toFixed(1)}s</button> — ${escapeHtml(e.description)}</li>`).join('')}</ul>` : '<p>No notable events detected in this trial.</p>');
@@ -190,16 +227,17 @@
 
   function renderComparisonSection() {
     const trials = getAssessment()?.trials || {};
-    const eo = trials.double_leg_eyes_open?.interpreted, ec = trials.double_leg_eyes_closed?.interpreted;
-    const cmp1 = (eo && ec) ? Interpretation.calculateEyesOpenClosedComparison(eo, ec, 'Double-leg') : null;
-    const roEo = trials.right_leg_eyes_open?.interpreted, roEc = trials.right_leg_eyes_closed?.interpreted;
-    const cmp2 = (roEo && roEc) ? Interpretation.calculateEyesOpenClosedComparison(roEo, roEc, 'Right single-leg') : null;
-    const loEo = trials.left_leg_eyes_open?.interpreted, loEc = trials.left_leg_eyes_closed?.interpreted;
-    const cmp3 = (loEo && loEc) ? Interpretation.calculateEyesOpenClosedComparison(loEo, loEc, 'Left single-leg') : null;
-    const cmpLR = (trials.right_leg_eyes_open?.interpreted && trials.left_leg_eyes_open?.interpreted) ? Interpretation.calculateLeftRightSingleLegComparison(trials.left_leg_eyes_open.interpreted, trials.right_leg_eyes_open.interpreted) : null;
-    function row(label, c) { if (!c) return `<tr><td>${escapeHtml(label)}</td><td colspan="3">Not enough trials completed yet.</td></tr>`; return `<tr><td>${escapeHtml(label)}</td><td>Open: ${fmt(c.sway_open, ' units', 3)}</td><td>Closed: ${fmt(c.sway_closed, ' units', 3)}</td><td>Change: ${c.sway_change_percent == null ? '—' : (c.sway_change_percent > 0 ? '+' : '') + c.sway_change_percent + '%'}</td></tr>`; }
-    let html = `<table class="summary-table"><thead><tr><th>Comparison</th><th colspan="3">Sway (total path)</th></tr></thead><tbody>${row('Double-leg: open vs closed', cmp1)}${row('Right single-leg: open vs closed', cmp2)}${row('Left single-leg: open vs closed', cmp3)}</tbody></table>`;
-    if (cmpLR) html += `<p style="margin-top:8px">Left vs right single-leg sway (eyes open): Left = ${fmt(cmpLR.sway_left, ' units', 3)}, Right = ${fmt(cmpLR.sway_right, ' units', 3)}. Left corrections: ${cmpLR.corrections_left}, Right corrections: ${cmpLR.corrections_right}.</p>`;
+    const average = condition => {
+      const values = Object.values(trials).filter(t => (t.condition_id || t.trial_name) === condition).map(t => t.interpreted?.balance_stability?.total_sway_path).filter(Number.isFinite);
+      return { count: values.length, value: values.length ? values.reduce((a, b) => a + b, 0) / values.length : null };
+    };
+    function row(label, openId, closedId) {
+      const open = average(openId), closed = average(closedId);
+      return `<tr><td>${escapeHtml(label)}</td><td>${fmt(open.value, ' units', 3)} (${open.count}/3)</td><td>${fmt(closed.value, ' units', 3)} (${closed.count}/3)</td><td>${open.value == null || closed.value == null ? '—' : fmt(closed.value - open.value, ' units', 3)}</td></tr>`;
+    }
+    let html = `<p>Means of completed repetitions. Camera image-plane path is not force-plate CoP displacement.</p><table class="summary-table"><thead><tr><th>Comparison</th><th>Eyes open</th><th>Eyes closed</th><th>Closed − open</th></tr></thead><tbody>${row('Double-leg', 'double_leg_eyes_open', 'double_leg_eyes_closed')}${row('Right single-leg', 'right_leg_eyes_open', 'right_leg_eyes_closed')}${row('Left single-leg', 'left_leg_eyes_open', 'left_leg_eyes_closed')}</tbody></table>`;
+    const left = average('left_leg_eyes_open'), right = average('right_leg_eyes_open');
+    if (left.value != null && right.value != null) html += `<p style="margin-top:8px">Eyes-open single-leg image-plane path: Left ${fmt(left.value, ' units', 3)}; right ${fmt(right.value, ' units', 3)}.</p>`;
     return html;
   }
 
@@ -229,6 +267,7 @@
       <div class="button-row secondary-row" style="margin-bottom:6px">
         <button id="raw-export-csv" class="outline">Export CSV</button>
         <button id="raw-export-json" class="outline">Export JSON</button>
+        ${raw.sideFrames?.length ? '<button id="raw-export-side-csv" class="outline">Export iPad side CSV</button>' : ''}
       </div>
       <div class="replay-panel">
         <div class="stage replay-stage" id="replay-stage"><canvas id="replay-canvas" width="480" height="540" style="width:100%;height:100%"></canvas></div>
@@ -249,7 +288,7 @@
       </div>
       <div id="raw-chart-holder"></div>
       <div class="table-wrap"><table class="summary-table raw-table" id="raw-table"><thead></thead><tbody></tbody></table></div>
-      <p style="font-size:.78rem">Raw coordinates are exactly as the pose model output them (normalized image coordinates 0–1, not spatially calibrated). Frame count: ${frames.length}. Phone samples: ${raw.phoneSamples?.length || 0}.</p>
+      <p style="font-size:.78rem">Raw coordinates are normalized image coordinates 0–1, not spatially calibrated. Front frames: ${frames.length}. iPad side frames: ${raw.sideFrames?.length || 0}. Phone samples: ${raw.phoneSamples?.length || 0}. The front and side streams remain separate.</p>
     `;
     container.innerHTML = html;
 
@@ -281,6 +320,13 @@
     renderTable(); renderRawChart();
 
     $('raw-export-json').onclick = () => downloadFile(`${record.trial_name}-raw.json`, JSON.stringify(raw, null, 2), 'application/json');
+    if ($('raw-export-side-csv')) $('raw-export-side-csv').onclick = () => {
+      const sideFrames = raw.sideFrames || [];
+      const names = Object.keys(sideFrames[0]?.landmarks || {});
+      const header = ['frame', 'time_s', 'image_width', 'image_height', ...names.flatMap(name => [`${name}_x`, `${name}_y`, `${name}_confidence`])];
+      const rows = sideFrames.map((frame, i) => [i, frame.timestamp_seconds, frame.image_width, frame.image_height, ...names.flatMap(name => { const point = frame.landmarks[name] || {}; return [point.x ?? '', point.y ?? '', point.confidence ?? '']; })].join(','));
+      downloadFile(`${record.trial_name}-ipad-side.csv`, [header.join(','), ...rows].join('\n'), 'text/csv');
+    };
     $('raw-export-csv').onclick = () => {
       const header = ['frame', 'time_s', ...landmarkNames.flatMap(n => [`${n}_x`, `${n}_y`, `${n}_z`, `${n}_confidence`])];
       const rows = frames.map((f, i) => [i, f.timestamp_seconds, ...landmarkNames.flatMap(n => { const p = f.landmarks[n] || {}; return [p.x, p.y, p.z, p.confidence]; })].join(','));
@@ -296,7 +342,6 @@
   }
 
   // ---- Skeleton replay ----
-  const POSE_EDGES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [27, 29], [27, 31], [24, 26], [26, 28], [28, 30], [28, 32], [0, 11], [0, 12]];
 
   function setupReplay(frames) {
     if (replayState) clearTimeout(replayState.timer);
@@ -327,13 +372,7 @@
     $('replay-time').textContent = `${frame.timestamp_seconds.toFixed(2)}s / frame ${index}`;
     const canvas = $('replay-canvas'); if (!canvas) return;
     const ctx = canvas.getContext('2d'); const w = canvas.width, h = canvas.height;
-    ctx.fillStyle = '#0c1116'; ctx.fillRect(0, 0, w, h);
-    const names = Object.keys(frame.landmarks);
-    const byIdx = {}; for (const n of names) byIdx[Assessment.LANDMARK_INDEX[n]] = frame.landmarks[n];
-    ctx.strokeStyle = '#0f9488'; ctx.lineWidth = 3;
-    for (const [a, b] of POSE_EDGES) { const pa = byIdx[a], pb = byIdx[b]; if (pa?.x != null && pb?.x != null) { ctx.beginPath(); ctx.moveTo(pa.x * w, pa.y * h); ctx.lineTo(pb.x * w, pb.y * h); ctx.stroke(); } }
-    ctx.fillStyle = '#f2b134';
-    for (const n of names) { const p = frame.landmarks[n]; if (p?.x != null) { ctx.beginPath(); ctx.arc(p.x * w, p.y * h, 4, 0, Math.PI * 2); ctx.fill(); } }
+    SideView.drawStick(ctx, frame.landmarks, w, h, 'left');
   }
   function seekReplay(t) {
     if (!replayState) return;
@@ -346,7 +385,7 @@
 
   // ---- Public entry points ----
   function populateTrialSelect(selectEl, assessment) {
-    const done = Assessment.TRIALS.filter(t => assessment.trials[t.trial_name]?.status === 'completed');
+    const done = Assessment.TRIALS.filter(t => assessment.trials[t.trial_name]?.status === 'completed' && assessment.trials[t.trial_name]?.protocol_valid !== false && assessment.trials[t.trial_name]?.duration_seconds === Assessment.TRIAL_DURATION_SECONDS);
     selectEl.innerHTML = done.map(t => `<option value="${t.trial_name}">${escapeHtml(t.label)}</option>`).join('') || '<option value="">No completed trials yet</option>';
     if (done.length && !done.some(t => t.trial_name === currentTrialName)) currentTrialName = done[0].trial_name;
     if (currentTrialName) selectEl.value = currentTrialName;

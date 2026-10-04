@@ -1,8 +1,8 @@
-// Pure calculation layer for the six-trial balance assessment.
+// Pure calculation layer for the six-condition, three-repetition assessment.
 // No DOM access here -- this module only turns recorded samples into
 // trial JSON, so it can be loaded in a browser or tested under Node.
 (function (global) {
-  const TRIALS = [
+  const CONDITIONS = [
     { id: 'double_leg_eyes_open', trial_number: 1, trial_name: 'double_leg_eyes_open', stance: 'double_leg', tested_leg: null, eyes: 'open', label: 'Double-leg — Eyes Open', instruction: 'Stand with both feet comfortably apart. Look straight ahead.' },
     { id: 'double_leg_eyes_closed', trial_number: 2, trial_name: 'double_leg_eyes_closed', stance: 'double_leg', tested_leg: null, eyes: 'closed', label: 'Double-leg — Eyes Closed', instruction: 'Stand with both feet comfortably apart. Close your eyes once recording starts.' },
     { id: 'right_leg_eyes_open', trial_number: 3, trial_name: 'right_leg_eyes_open', stance: 'single_leg', tested_leg: 'right', eyes: 'open', label: 'Right Leg — Eyes Open', instruction: 'Stand on your right leg. Look straight ahead.' },
@@ -11,7 +11,24 @@
     { id: 'left_leg_eyes_closed', trial_number: 6, trial_name: 'left_leg_eyes_closed', stance: 'single_leg', tested_leg: 'left', eyes: 'closed', label: 'Left Leg — Eyes Closed', instruction: 'Stand on your left leg. Close your eyes once recording starts.' },
   ];
 
-  const TRIAL_DURATION_SECONDS = 20;
+  let REPETITIONS = 3;
+  let TRIAL_DURATION_SECONDS = 30;
+  const TRIALS = [];
+  function setProtocol({ repetitions = 3, durationSeconds = 30 } = {}) {
+    if (![1, 2, 3, 4, 5].includes(repetitions) || ![5, 10, 20, 30, 45, 60].includes(durationSeconds)) throw new Error('Unsupported trial settings.');
+    REPETITIONS = repetitions;
+    TRIAL_DURATION_SECONDS = durationSeconds;
+    TRIALS.splice(0, TRIALS.length, ...CONDITIONS.flatMap(condition => Array.from({ length: REPETITIONS }, (_, i) => ({
+      ...condition,
+      id: `${condition.id}_rep_${i + 1}`,
+      trial_name: `${condition.trial_name}_rep_${i + 1}`,
+      condition_id: condition.id,
+      repetition: i + 1,
+      trial_number: (condition.trial_number - 1) * REPETITIONS + i + 1,
+      label: `${condition.label} · ${i + 1}/${REPETITIONS}`,
+    }))));
+  }
+  setProtocol();
 
   // Every landmark MediaPipe's Pose model produces (33 points), not just the
   // subset used in balance calculations -- the Raw Results view preserves
@@ -44,6 +61,26 @@
   const safeMax = a => a.length ? Math.max(...a) : null;
   const safeRange = a => a.length ? Math.max(...a) - Math.min(...a) : null;
   const deg = r => r * 180 / Math.PI;
+
+  function computePhoneNeutral(samples) {
+    const usable = (samples || []).map(s => s.gravity_including).filter(g => g && [g.x, g.y, g.z].every(Number.isFinite));
+    if (usable.length < 20) return { valid: false, reason: 'Not enough gravity readings. Keep the phone connected and retry.' };
+    const vector = { x: mean(usable.map(g => g.x)), y: mean(usable.map(g => g.y)), z: mean(usable.map(g => g.z)) };
+    const magnitude = Math.hypot(vector.x, vector.y, vector.z);
+    const motionRms = rms(usable.map(g => Math.hypot(g.x - vector.x, g.y - vector.y, g.z - vector.z)));
+    if (magnitude < 7.5 || magnitude > 11.5 || motionRms > 0.65) return { valid: false, reason: 'Phone moved during calibration or gravity readings were unreliable. Stand still and retry.', sample_count: usable.length, gravity_magnitude_m_s2: round(magnitude), motion_rms_m_s2: round(motionRms) };
+    const orientations = (samples || []).map(s => s.orientation).filter(o => o && Number.isFinite(o.roll) && Number.isFinite(o.pitch));
+    return { valid: true, sample_count: usable.length, gravity_vector_device_m_s2: { x: round(vector.x), y: round(vector.y), z: round(vector.z) }, gravity_magnitude_m_s2: round(magnitude), motion_rms_m_s2: round(motionRms), neutral_orientation_deg: orientations.length >= 20 ? { roll: round(mean(orientations.map(o => o.roll))), pitch: round(mean(orientations.map(o => o.pitch))) } : null, yaw_anatomical_alignment: 'unknown', measured_at: new Date().toISOString() };
+  }
+
+  function computeNeutralRelativeTilt(samples, neutral) {
+    const reference = neutral?.valid && neutral.neutral_orientation_deg;
+    if (!reference) return { available: false, reason: 'Device orientation was unavailable during phone calibration.' };
+    const delta = (a, b) => ((a - b + 180) % 360 + 360) % 360 - 180;
+    const orientation = (samples || []).map(s => s.orientation).filter(o => o && Number.isFinite(o.roll) && Number.isFinite(o.pitch));
+    if (orientation.length < 20) return { available: false, reason: 'Not enough orientation samples in this trial.' };
+    return { available: true, units: 'degrees', roll_rms_from_neutral_deg: round(rms(orientation.map(o => delta(o.roll, reference.roll)))), pitch_rms_from_neutral_deg: round(rms(orientation.map(o => delta(o.pitch, reference.pitch)))), sample_count: orientation.length, note: 'Phone tilt relative to quiet standing; not anatomical trunk angles or force-plate displacement.' };
+  }
 
   function landmarkVisible(l) { return !!l && l.confidence != null && l.confidence > VISIBILITY_THRESHOLD; }
 
@@ -82,6 +119,23 @@
   function tilt(a, b) { if (a.x == null || b.x == null) return null; return deg(Math.atan2(b.y - a.y, b.x - a.x)); }
   function verticalDeviation(a, b) { if (a.x == null || b.x == null) return null; return deg(Math.atan2(b.x - a.x, a.y - b.y)); }
   function jointAngle(a, b, c) { if (a.x == null || b.x == null || c.x == null) return null; const d1 = Math.hypot(a.x - b.x, a.y - b.y), d2 = Math.hypot(c.x - b.x, c.y - b.y); if (!d1 || !d2) return null; return deg(Math.acos(Math.max(-1, Math.min(1, ((a.x - b.x) * (c.x - b.x) + (a.y - b.y) * (c.y - b.y)) / (d1 * d2))))); }
+
+  // Signed, image-plane knee bend: positive when the knee projects toward the
+  // opposite hip (valgus-like), negative when it projects away (varus-like).
+  // This is a 2D screening proxy, not an anatomical frontal-plane joint angle.
+  function frontalKneeDeviation(hip, knee, ankle, oppositeHip, width, height) {
+    if (![hip, knee, ankle, oppositeHip].every(p => p && Number.isFinite(p.x) && Number.isFinite(p.y) && (p.confidence ?? p.visibility ?? 0) > VISIBILITY_THRESHOLD) || !Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+    const h = { x: hip.x * width, y: hip.y * height };
+    const k = { x: knee.x * width, y: knee.y * height };
+    const a = { x: ankle.x * width, y: ankle.y * height };
+    const otherX = oppositeHip.x * width;
+    if (Math.abs(otherX - h.x) < width * 0.025 || Math.abs(a.y - h.y) < height * 0.08) return null;
+    const interior = jointAngle(h, k, a);
+    if (interior == null) return null;
+    const projectedX = h.x + (a.x - h.x) * (k.y - h.y) / (a.y - h.y);
+    const towardOtherHip = (k.x - projectedX) * Math.sign(otherX - h.x);
+    return round((180 - interior) * Math.sign(towardOtherHip), 2);
+  }
 
   // Groups a run of consecutive threshold-exceeding samples into a single
   // event at its peak, instead of emitting one event per frame.
@@ -124,9 +178,9 @@
     const correctionEvents = detectThresholdEvents(magSeries, magMean + 2 * magStd, 'large_corrective_movement', v => `Large sway movement detected (acceleration magnitude ${v.toFixed(2)} m/s²).`);
     const suddenAccelEvents = detectThresholdEvents(velocitySeries, velMean + 3 * velStd, 'sudden_acceleration', () => 'Sudden change in acceleration detected.');
     const balanceLossEvents = detectThresholdEvents(magSeries, magMean + 4 * magStd, 'possible_balance_loss', v => `Large, abrupt movement detected (magnitude ${v.toFixed(2)} m/s²) -- possible balance loss.`);
-    const dominant_direction = lateralRange >= apRange
-      ? (mean(x) >= 0 ? 'right' : 'left')
-      : (mean(z) >= 0 ? 'forward' : 'backward');
+    // Axis signs are device coordinates, not anatomical directions without
+    // an orientation calibration. Do not assign left/right or front/back.
+    const dominant_direction = lateralRange >= apRange ? 'device x axis' : 'device z axis';
     return {
       metrics: {
         mean_lateral_sway: round(meanAbs(x)),
@@ -167,6 +221,8 @@
         head: (landmarkVisible(l.nose) && shoulder.x != null) ? Math.abs(verticalDeviation(shoulder, l.nose)) : null,
         leftKnee: jointAngle(l.left_hip, l.left_knee, l.left_ankle),
         rightKnee: jointAngle(l.right_hip, l.right_knee, l.right_ankle),
+        leftFrontalKnee: frontalKneeDeviation(l.left_hip, l.left_knee, l.left_ankle, l.right_hip, f.image_width, f.image_height),
+        rightFrontalKnee: frontalKneeDeviation(l.right_hip, l.right_knee, l.right_ankle, l.left_hip, f.image_width, f.image_height),
         leftKneeX: l.left_knee.x, rightKneeX: l.right_knee.x,
         leftHipX: l.left_hip.x, leftAnkleX: l.left_ankle.x,
         rightHipX: l.right_hip.x, rightAnkleX: l.right_ankle.x,
@@ -185,6 +241,7 @@
     const numeric = key => visibleRows.map(r => r[key]);
     const trunkVals = col('trunk'), pelvisVals = col('pelvisTilt').map(Math.abs), shoulderVals = col('shoulderTilt').map(Math.abs), headVals = col('head');
     const leftKneeVals = col('leftKnee'), rightKneeVals = col('rightKnee');
+    const leftFrontalKneeVals = col('leftFrontalKnee'), rightFrontalKneeVals = col('rightFrontalKnee');
     const hipX = visibleRows.map(r => r.hip.x).filter(v => v != null);
     const hipY = visibleRows.map(r => r.hip.y).filter(v => v != null);
 
@@ -289,8 +346,8 @@
         shoulders: { mean_tilt: round(mean(shoulderVals)), max_tilt: round(Math.max(...shoulderVals)), dominant_direction: mean(shoulderSignedVals) >= 0 ? 'right' : 'left', movement_variability: round(stdDev(shoulderSignedVals)) },
         pelvis: { mean_tilt: round(mean(pelvisVals)), max_tilt: round(Math.max(...pelvisVals)), dominant_direction: mean(pelvisSignedVals) >= 0 ? 'right' : 'left', lateral_hip_displacement: round(Math.max(...hipX) - Math.min(...hipX)), movement_variability: round(stdDev(pelvisSignedVals)) },
         head: { mean_tilt: round(mean(headVals)), max_tilt: round(safeMax(headVals)), movement_range: round(safeRange(headVals)) },
-        left_knee: { mean_angle: round(mean(leftKneeVals)), movement_variability: round(leftKneeVariability), medial_lateral_displacement: round(stdDev(leftKneeDisp)) },
-        right_knee: { mean_angle: round(mean(rightKneeVals)), movement_variability: round(rightKneeVariability), medial_lateral_displacement: round(stdDev(rightKneeDisp)) },
+        left_knee: { mean_angle: round(mean(leftKneeVals)), movement_variability: round(leftKneeVariability), medial_lateral_displacement: round(stdDev(leftKneeDisp)), mean_frontal_deviation_deg: round(mean(leftFrontalKneeVals), 2), peak_frontal_deviation_deg: round(safeMax(leftFrontalKneeVals.map(Math.abs)), 2) },
+        right_knee: { mean_angle: round(mean(rightKneeVals)), movement_variability: round(rightKneeVariability), medial_lateral_displacement: round(stdDev(rightKneeDisp)), mean_frontal_deviation_deg: round(mean(rightFrontalKneeVals), 2), peak_frontal_deviation_deg: round(safeMax(rightFrontalKneeVals.map(Math.abs)), 2) },
         feet: { stance_width: round(mean(stanceWidths)), left_foot_movement: round(leftFootMovement), right_foot_movement: round(rightFootMovement) },
         whole_body: {
           lateral_movement: round(Math.max(...hipX) - Math.min(...hipX)),
@@ -312,8 +369,8 @@
       trunk: nullBlock({ sway_range: null }), shoulders: nullBlock({}),
       pelvis: { mean_tilt: null, max_tilt: null, dominant_direction: null, lateral_hip_displacement: null, movement_variability: null },
       head: { mean_tilt: null, max_tilt: null, movement_range: null },
-      left_knee: { mean_angle: null, movement_variability: null, medial_lateral_displacement: null },
-      right_knee: { mean_angle: null, movement_variability: null, medial_lateral_displacement: null },
+      left_knee: { mean_angle: null, movement_variability: null, medial_lateral_displacement: null, mean_frontal_deviation_deg: null, peak_frontal_deviation_deg: null },
+      right_knee: { mean_angle: null, movement_variability: null, medial_lateral_displacement: null, mean_frontal_deviation_deg: null, peak_frontal_deviation_deg: null },
       feet: { stance_width: null, left_foot_movement: null, right_foot_movement: null },
       whole_body: { lateral_movement: null, anterior_posterior_movement: null, asymmetry: null, postural_corrections: null, major_instability_events: null },
     };
@@ -330,6 +387,8 @@
       trial_id: `${sessionId}_${trial.id}`,
       trial_number: trial.trial_number,
       trial_name: trial.trial_name,
+      condition_id: trial.condition_id || trial.trial_name,
+      repetition: trial.repetition || 1,
       stance: trial.stance,
       tested_leg: trial.tested_leg,
       eyes: trial.eyes,
@@ -338,6 +397,12 @@
       started_at: startedAt,
       ended_at: endedAt,
       phone_balance: phone.metrics,
+      measurement_notes: {
+        phone_total_sway: 'RMS acceleration magnitude in m/s²; not displacement or force-plate center of pressure.',
+        phone_mean_sway_velocity: 'Mean absolute derivative of acceleration magnitude in m/s³ (jerk proxy); not body velocity.',
+        camera_angles: '2D image-plane angles; not equivalent to 3D laboratory joint rotations.',
+        camera_ap: 'Image vertical coordinate; not anatomical anterior-posterior displacement.',
+      },
       camera_posture: camera.posture,
       single_leg_metrics: camera.singleLeg,
       events,
@@ -388,21 +453,65 @@
   }
 
   function buildAssessmentJSON({ assessmentId, patientId, date, assessmentNumber, trials }) {
-    const trialsById = Object.fromEntries(trials.map(t => [t.trial_name, t]));
+    const conditionMeans = {};
+    for (const condition of CONDITIONS) {
+      const group = trials.filter(t => (t.condition_id || t.trial_name) === condition.id && t.protocol_valid !== false);
+      const avg = get => { const values = group.map(get).filter(Number.isFinite); return values.length ? round(mean(values)) : null; };
+      const repeatability = get => {
+        const values = group.map(get).filter(Number.isFinite);
+        if (values.length < 2) return { n: values.length, mean: values.length ? round(mean(values)) : null, sd: null, cv_percent: null };
+        const m = mean(values);
+        const sd = Math.sqrt(values.reduce((sum, value) => sum + (value - m) ** 2, 0) / (values.length - 1));
+        return { n: values.length, mean: round(m), sd: round(sd), cv_percent: m === 0 ? null : round(Math.abs(100 * sd / m), 2) };
+      };
+      conditionMeans[condition.id] = {
+        condition_id: condition.id,
+        completed_repetitions: group.length,
+        excluded_protocol_error_repetitions: trials.filter(t => (t.condition_id || t.trial_name) === condition.id && t.protocol_valid === false).length,
+        phone_balance: {
+          total_sway: avg(t => t.phone_balance?.total_sway),
+          mean_sway_velocity: avg(t => t.phone_balance?.mean_sway_velocity),
+          large_corrections: avg(t => t.phone_balance?.large_corrections),
+        },
+        camera_posture: {
+          trunk: { mean_lean: avg(t => t.camera_posture?.trunk?.mean_lean) },
+          pelvis: { mean_tilt: avg(t => t.camera_posture?.pelvis?.mean_tilt) },
+          left_knee: { movement_variability: avg(t => t.camera_posture?.left_knee?.movement_variability), mean_frontal_deviation_deg: avg(t => t.camera_posture?.left_knee?.mean_frontal_deviation_deg) },
+          right_knee: { movement_variability: avg(t => t.camera_posture?.right_knee?.movement_variability), mean_frontal_deviation_deg: avg(t => t.camera_posture?.right_knee?.mean_frontal_deviation_deg) },
+        },
+        side_camera: {
+          mean_knee_flexion_proxy_deg: avg(t => t.side_camera?.mean_knee_flexion_proxy_deg),
+          mean_hip_flexion_proxy_deg: avg(t => t.side_camera?.mean_hip_flexion_proxy_deg),
+          mean_trunk_lean_deg: avg(t => t.side_camera?.mean_trunk_lean_deg),
+        },
+        single_leg_metrics: {
+          opposite_foot_touchdowns: avg(t => t.single_leg_metrics?.opposite_foot_touchdowns),
+          successful_stance_duration: avg(t => t.single_leg_metrics?.successful_stance_duration),
+          trunk_compensation: avg(t => t.single_leg_metrics?.trunk_compensation),
+        },
+        within_session_repeatability: {
+          phone_rms_acceleration_m_s2: repeatability(t => t.phone_balance?.total_sway),
+          camera_image_plane_path_normalized_units: repeatability(t => t.interpreted?.balance_stability?.total_sway_path),
+          camera_trunk_lean_degrees: repeatability(t => t.camera_posture?.trunk?.mean_lean),
+          side_knee_flexion_proxy_degrees: repeatability(t => t.side_camera?.mean_knee_flexion_proxy_deg),
+        },
+      };
+    }
     return {
       assessment: { assessment_id: assessmentId, patient_id: patientId || null, date, assessment_number: assessmentNumber ?? null },
-      protocol: { trial_duration_seconds: TRIAL_DURATION_SECONDS, number_of_trials: TRIALS.length },
+      protocol: { trial_duration_seconds: TRIAL_DURATION_SECONDS, number_of_conditions: CONDITIONS.length, repetitions_per_condition: REPETITIONS, number_of_trials: TRIALS.length },
       trials,
-      comparisons: computeComparisons(trialsById),
+      condition_means: conditionMeans,
+      comparisons: computeComparisons(conditionMeans),
       historical_comparison: { baseline_available: false, previous_assessment_available: false, changes: [] },
     };
   }
 
   global.Assessment = {
-    TRIALS, TRIAL_DURATION_SECONDS, LANDMARK_INDEX, FULL_BODY_LANDMARKS,
-    fullBodyInFrame, landmarkVisible,
+    TRIALS, CONDITIONS, get REPETITIONS() { return REPETITIONS; }, get TRIAL_DURATION_SECONDS() { return TRIAL_DURATION_SECONDS; }, setProtocol, LANDMARK_INDEX, FULL_BODY_LANDMARKS,
+    fullBodyInFrame, landmarkVisible, frontalKneeDeviation,
     captureLandmarkFrame, capturePhoneSample,
-    computePhoneMetrics, computeCameraMetrics, buildTrialRecord,
+    computePhoneMetrics, computePhoneNeutral, computeNeutralRelativeTilt, computeCameraMetrics, buildTrialRecord,
     computeComparisons, buildAssessmentJSON,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
