@@ -15,7 +15,6 @@
     right_knee: ['right_hip', 'right_knee', 'right_ankle'],
     left_ankle: ['left_knee', 'left_ankle', 'left_foot_index'],
     right_ankle: ['right_knee', 'right_ankle', 'right_foot_index'],
-    head: ['left_ear', 'right_ear', 'nose'],
     shoulders: ['left_shoulder', 'right_shoulder'],
     pelvis: ['left_hip', 'right_hip'],
     left_elbow: ['left_shoulder', 'left_elbow', 'left_wrist'],
@@ -120,20 +119,6 @@
       range: shoulder_ts.range, std: shoulder_ts.std,
     };
 
-    // ---- Head/neck ----
-    const headSeries = deriveSeries(framesSorted, f => {
-      const le = point(f, 'left_ear'), re = point(f, 'right_ear');
-      if (le && re) return B.calculateTilt(le, re);
-      const ns = point(f, 'nose'); const sh = point(f, 'left_shoulder') && point(f, 'right_shoulder') ? B.midpoint(point(f, 'left_shoulder'), point(f, 'right_shoulder')) : null;
-      return (ns && sh) ? B.calculateTrunkAngle(ns, sh) : null;
-    });
-    const earFrames = framesSorted.filter(f => point(f, 'left_ear') && point(f, 'right_ear')).length;
-    const head_ts = B.buildTimeSeries('head_tilt', 'degrees', headSeries.smoothed, true);
-    const head_neck = {
-      head_tilt: head_ts, mean_tilt: head_ts.mean, range: head_ts.range, std: head_ts.std,
-      confidence_note: earFrames > framesSorted.length * 0.5 ? 'Based on ear landmarks (higher confidence).' : 'Ear tracking was low-confidence for much of this trial; falls back to a coarse nose-vs-shoulder estimate and should be treated as approximate.',
-    };
-
     // ---- Knees (both sides) ----
     function kneeAnalysis(side) {
       const hipName = `${side}_hip`, kneeName = `${side}_knee`, ankleName = `${side}_ankle`;
@@ -223,7 +208,7 @@
       if (k.timestamp_of_peak_deviation != null) list.push({ timestamp_seconds: k.timestamp_of_peak_deviation, type: `max_${side}_knee_deviation`, description: `Maximum ${side} knee medial/lateral deviation at ${round(k.timestamp_of_peak_deviation, 1)}s.` });
       return list;
     }));
-    for (const [side, a] of [['left', ankles_feet.left], ['right', ankles_feet.right]]) for (const c of a.corrections) events.push({ timestamp_seconds: c.timestamp_seconds, type: `${side}_foot_correction`, description: `${side} foot correction (${c.direction}) at ${round(c.timestamp_seconds, 1)}s.` });
+    for (const [side, a] of [['left', ankles_feet.left], ['right', ankles_feet.right]]) for (const c of a.corrections) events.push({ timestamp_seconds: c.timestamp_seconds, type: `${side}_foot_correction`, description: `${side} ankle repositioning estimate (${c.direction}) at ${round(c.timestamp_seconds, 1)}s; not a confirmed step or floor touch.` });
     events.sort((a, b) => a.timestamp_seconds - b.timestamp_seconds);
 
     // ---- Thirds analysis (descriptive only, no causal claims) ----
@@ -254,7 +239,7 @@
       camera_orientation: cameraOrientation,
       normalization: { scale_reference: scale.reference, scale_value_raw_units: round(scale.value) },
       measurement_quality: { ...quality, thresholds },
-      whole_body_overview, balance_stability, head_neck, shoulders, trunk, pelvis_hips,
+      whole_body_overview, balance_stability, shoulders, trunk, pelvis_hips,
       left_knee, right_knee, left_leg, right_leg, arms, ankles_feet, symmetry, events_timeline: events,
       thirds_analysis: { windows, metrics: thirds, statements: thirds_statements },
     };

@@ -30,11 +30,11 @@ Analyze:
 - postural control
 - trunk compensation
 - pelvic compensation
-- shoulder and head movement
+- shoulder movement (do not report head or facial movement)
 - single-leg stability
 - left/right asymmetry
 - eyes-open versus eyes-closed differences
-- opposite-foot touchdowns
+- possible opposite-foot floor contacts (2D estimates only; never call confirmed touchdowns)
 - corrective movements
 - consistency between trials
 - camera and phone measurements that support the same observation
@@ -42,6 +42,7 @@ Analyze:
 - changes from baseline when available
 
 When describing progress, use actual measurements whenever possible.
+For every finding, identify the condition and repetition, measured value and unit, and timestamp when the data supplies one. Explain technical values in everyday language. Do not write vague statements such as "areas of imbalance require attention" without naming the specific measured difference and its limitations. If a trial's foot-contact estimate is unavailable, say so; do not convert missing values to zero. Do not interpret an acceleration value in m/s² as a distance or a pass/fail score.
 
 For example:
 
