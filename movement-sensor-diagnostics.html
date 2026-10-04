@@ -184,6 +184,8 @@
     .raw-filters select,.raw-filters input{margin:2px 0 0;padding:6px;width:auto}
     .raw-table{font-size:.76rem}
     .raw-table td,.raw-table th{white-space:nowrap;padding:5px 7px}
+    .stored-folder{border:1px solid var(--line);border-radius:var(--radius-md);padding:14px;margin:12px 0;background:#fff}
+    .stored-folder summary{font-weight:700}
   </style>
 </head>
 <body>
@@ -203,6 +205,7 @@
   <nav class="sidebar">
     <button class="nav-item active" id="nav-home-btn">Home</button>
     <button class="nav-item" id="nav-results-btn">Results</button>
+    <button class="nav-item" id="nav-stored-btn">Stored data</button>
   </nav>
   <div class="app-content">
   <div id="home-view">
@@ -223,6 +226,13 @@
   <p id="camera-status" class="status-line">Not requested.</p>
   <p id="motion-status" class="status-line">Place the phone vertically at the lower back (L5), then enable the sensor.</p>
   <p id="rest-status" class="status-line">Rest 30–60 seconds between trials.</p>
+  <section class="card" id="phone-calibration-card">
+    <strong>Phone neutral reference</strong>
+    <p>Secure the phone at L5 in portrait orientation, with its top toward the head. Stand comfortably upright with both feet on the floor and hands on hips. Do not touch the phone. When phone samples are arriving, click Calibrate phone on the computer and stay still for 5 seconds. Repeat after moving the phone or changing the belt.</p>
+    <div class="button-row"><button class="outline" id="calibrate-phone-button" type="button">Calibrate phone · 5 seconds</button><label><input type="checkbox" id="voice-guidance" checked> Speak trial instructions</label></div>
+    <p id="phone-calibration-status" class="status-line" role="status">Not calibrated. Overall acceleration is available, but neutral-relative tilt is not.</p>
+    <p class="status-line">This records a quiet-standing reference, not a clinical anatomical calibration. It cannot determine which way the phone faces around the vertical axis. Raw readings remain unchanged.</p>
+  </section>
   <section class="card" id="protocol-card">
     <strong>Standardized trial setup</strong>
     <p>Keep the camera fixed, full body and both feet visible, phone firmly vertical at L5, footwear and marked foot positions unchanged. Stand upright with hands on hips; do not touch support. Rest 30–60 seconds between runs. If a run has a step, support touch, arm movement, early stop, or eyes opening, use Redo trial.</p>
@@ -325,6 +335,8 @@
       <div id="condition-means"></div>
       <div id="results-body"></div>
       <div id="failed-history-list"></div>
+      <div class="button-row"><button id="store-data-button" type="button">Store data in named folder</button></div>
+      <p id="store-data-status" class="status-line">Folders are stored in this browser on this device. Use a participant code instead of a full name on shared devices.</p>
     </section>
     <section class="card">
       <strong>Trial Motion Analysis</strong>
@@ -350,6 +362,13 @@
       <div id="validation-result" role="status"><p>Choose a completed trial above, then import its laboratory CSV.</p></div>
     </section>
   </div>
+  <div id="stored-view" style="display:none">
+    <section class="card">
+      <strong>Stored data</strong>
+      <p>Named assessment folders saved on this device. Browser data can be cleared, so download a copy for your records. These folders are not synced to another device or backed up by Render.</p>
+      <div id="stored-folders" role="status">Loading saved folders…</div>
+    </section>
+  </div>
   </div>
   </div>
 </main>
@@ -361,6 +380,7 @@
   let trialRecording = false, trialTimer = null, countdownTimer = null, activeTrialId = null, readinessPoll = null, trialStartPerf = null, pendingBodyWait = null;
   let restUntil = 0;
   let phoneSampleBuffer = [], cameraFrameBuffer = [], sideFrameBuffer = [], lastPhoneSampleAt = 0, lastSideStatusAt = 0, currentAssessment = null, latestPhoneSample = null, sideCameraFacing = 'left';
+  let phoneCalibrationSamples = null, phoneCalibrationTimer = null, phoneCalibration = null;
   let latestOrientation = { roll: null, pitch: null, yaw: null };
   window.addEventListener('deviceorientation', e => { latestOrientation = { roll: e.gamma ?? null, pitch: e.beta ?? null, yaw: e.alpha ?? null }; });
   const query=new URLSearchParams(location.search);
@@ -506,8 +526,8 @@
   function onPoseResults(r) { landmarks=r.poseLandmarks||null; drawSkeleton(landmarks); updateLivePose(); if (trialRecording) { const frame=Assessment.captureLandmarkFrame(landmarks, (performance.now()-trialStartPerf)/1000); frame.image_width=video.videoWidth; frame.image_height=video.videoHeight; cameraFrameBuffer.push(frame); } }
   function detectLoop() { if (!stream) return; if (poseTracker && !detecting && video.readyState>=2) { detecting=true; poseTracker.send({image:video}).catch(()=>{}).finally(()=>{detecting=false;}); } requestAnimationFrame(detectLoop); }
   function waitForPose(timeoutMs=6000) { return new Promise(resolve=>{ if (typeof Pose!=='undefined') return resolve(true); const started=performance.now(); const check=()=>{ if (typeof Pose!=='undefined') return resolve(true); if (performance.now()-started>timeoutMs) return resolve(false); setTimeout(check,150); }; check(); }); }
-  function updateImuScore(sample) { const magnitude=Math.hypot(sample.x,sample.y,sample.z); baseline.push(magnitude); if(baseline.length>45) baseline.shift(); const mean=baseline.reduce((s,n)=>s+n,0)/baseline.length; imuScore=Math.min(100,Math.abs(magnitude-mean)*18); $('imu-score').textContent=`${imuScore.toFixed(1)} / 100`; }
-  function onMotion(event) { const linear=event.acceleration && [event.acceleration.x,event.acceleration.y,event.acceleration.z].every(Number.isFinite); const a=linear?event.acceleration:event.accelerationIncludingGravity; const r=event.rotationRate; if (!a) return; const sample={t:performance.now(),x:+(a.x||0),y:+(a.y||0),z:+(a.z||0),gx:+(r?.alpha||0),gy:+(r?.beta||0),gz:+(r?.gamma||0),ax:a.x??null,ay:a.y??null,az:a.z??null,acceleration_source:linear?'linear_acceleration':'including_gravity',agx:r?.alpha??null,agy:r?.beta??null,agz:r?.gamma??null,orientation:{...latestOrientation},elapsedTrial:(pair.mode==='sensor'&&trialStartPerf!=null)?(performance.now()-trialStartPerf)/1000:null}; updateImuScore(sample); if(pair.mode==='sensor')sendPair({type:'sample',sample}); }
+  function updateImuScore(sample) { if (pair.mode==='camera' && phoneCalibrationSamples) phoneCalibrationSamples.push(sample); const magnitude=Math.hypot(sample.x,sample.y,sample.z); baseline.push(magnitude); if(baseline.length>45) baseline.shift(); const mean=baseline.reduce((s,n)=>s+n,0)/baseline.length; imuScore=Math.min(100,Math.abs(magnitude-mean)*18); $('imu-score').textContent=`${imuScore.toFixed(1)} / 100`; }
+  function onMotion(event) { const linear=event.acceleration && [event.acceleration.x,event.acceleration.y,event.acceleration.z].every(Number.isFinite); const a=linear?event.acceleration:event.accelerationIncludingGravity; const r=event.rotationRate; if (!a) return; const gravity=event.accelerationIncludingGravity; const sample={t:performance.now(),x:+(a.x||0),y:+(a.y||0),z:+(a.z||0),gx:+(r?.alpha||0),gy:+(r?.beta||0),gz:+(r?.gamma||0),ax:a.x??null,ay:a.y??null,az:a.z??null,gravity_including:gravity?{x:gravity.x??null,y:gravity.y??null,z:gravity.z??null}:null,acceleration_source:linear?'linear_acceleration':'including_gravity',agx:r?.alpha??null,agy:r?.beta??null,agz:r?.gamma??null,orientation:{...latestOrientation},elapsedTrial:(pair.mode==='sensor'&&trialStartPerf!=null)?(performance.now()-trialStartPerf)/1000:null}; updateImuScore(sample); if(pair.mode==='sensor')sendPair({type:'sample',sample}); }
   $('camera-button').onclick = async () => {
     if (!navigator.mediaDevices?.getUserMedia) { $('camera-status').textContent='Unavailable: this page is not a secure, camera-capable browser context.'; log('Camera API unavailable (usually non-HTTPS or blocked webview).','warn'); return; }
     $('camera-button').disabled=true; $('camera-status').textContent='Requesting camera permission…'; log('Calling getUserMedia with video.facingMode=ideal:user.');
@@ -537,12 +557,55 @@
   $('motion-button').onclick = async () => {
     if (pair.mode==='camera') { openQrModal(); return; }
     if (motionEnabled) return; if (typeof DeviceMotionEvent==='undefined') { $('motion-status').textContent='DeviceMotionEvent is unavailable in this context.'; return; }
-    try { if (typeof DeviceMotionEvent.requestPermission==='function') { const result=await DeviceMotionEvent.requestPermission(); if(result!=='granted') throw new Error(`Motion permission was ${result}`); } window.addEventListener('devicemotion',onMotion,{passive:true}); motionEnabled=true; $('motion-button').disabled=true; $('motion-status').textContent='Motion sensor enabled. Keep the phone fixed at L5 in portrait orientation.'; log('Motion listener enabled.'); }
+    try {
+      // Start both iOS permission requests inside the same user gesture.
+      const motionPermission=typeof DeviceMotionEvent.requestPermission==='function' ? DeviceMotionEvent.requestPermission() : Promise.resolve('granted');
+      const orientationPermission=typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function' ? DeviceOrientationEvent.requestPermission().catch(()=> 'denied') : Promise.resolve('unavailable');
+      const motionResult=await motionPermission;
+      if(motionResult!=='granted') throw new Error(`Motion permission was ${motionResult}`);
+      orientationPermission.then(result=>{ if(result==='denied') log('Phone orientation permission denied; neutral-relative tilt may be unavailable.','warn'); });
+      window.addEventListener('devicemotion',onMotion,{passive:true}); motionEnabled=true; $('motion-button').disabled=true;
+      $('motion-status').textContent='Motion sensor enabled. Keep the phone fixed at L5 in portrait orientation.'; log('Motion listener enabled.');
+    }
     catch(error) { $('motion-status').textContent=`Motion unavailable: ${error.message}`; log(`Motion permission failed — ${error.message}`,'warn'); }
   };
   $('form-button').onclick=formCheck;
   function loadAssessment() { try { const raw=localStorage.getItem('assessment-current'); if (raw) { const parsed=JSON.parse(raw); if (parsed && parsed.trials) return parsed; } } catch {} return { assessment_id: crypto.randomUUID(), date: new Date().toISOString(), trials: {} }; }
   function saveCurrentAssessment() { try { localStorage.setItem('assessment-current', JSON.stringify(currentAssessment)); } catch {} }
+  function speak(text, finished) {
+    if (!$('voice-guidance').checked || !('speechSynthesis' in window)) { finished?.(); return; }
+    window.speechSynthesis.cancel();
+    const utterance=new SpeechSynthesisUtterance(text);
+    utterance.rate=0.95;
+    let done=false;
+    const complete=()=>{ if(done)return; done=true; finished?.(); };
+    utterance.onend=complete; utterance.onerror=complete;
+    window.speechSynthesis.speak(utterance);
+    setTimeout(complete, Math.min(12000, Math.max(4000, text.length*75)));
+  }
+  function describeTrial(trial) {
+    return `${trial.label}. Place both hands on your hips. ${trial.stance==='double_leg'?'Stand on both feet at your marked positions.':`Stand on your ${trial.tested_leg} leg and lift the other foot without touching your standing leg.`} ${trial.eyes==='closed'?'Close your eyes when the recording starts.':'Look straight ahead at your fixed target.'} Remain still and avoid touching support. The trial lasts ${Assessment.TRIAL_DURATION_SECONDS} seconds. The countdown begins after these instructions.`;
+  }
+  function renderPhoneCalibration() {
+    const c=phoneCalibration;
+    $('phone-calibration-status').textContent=c?.valid?`Reference saved at ${new Date(c.measured_at).toLocaleTimeString()} from ${c.sample_count} readings. Stillness RMS ${c.motion_rms_m_s2} m/s². Recalibrate if the phone moves.`:'Not calibrated. Overall acceleration is available, but neutral-relative tilt is not.';
+  }
+  $('calibrate-phone-button').onclick=()=>{
+    if(pair.mode!=='camera') return;
+    if(trialRecording || phoneCalibrationSamples) { $('phone-calibration-status').textContent='Finish the current recording or calibration first.'; return; }
+    if(!pair.peer || Date.now()-lastPhoneSampleAt>4000) { $('phone-calibration-status').textContent='Connect the phone and enable motion readings before calibrating.'; return; }
+    phoneCalibrationSamples=[];
+    $('calibrate-phone-button').disabled=true;
+    $('phone-calibration-status').textContent='Calibrating for 5 seconds. Stand still; do not touch the phone.';
+    speak('Stand comfortably upright with both feet on the floor and hands on your hips. Do not touch the phone. Stay still for five seconds.');
+    phoneCalibrationTimer=setTimeout(()=>{
+      const result=Assessment.computePhoneNeutral(phoneCalibrationSamples);
+      phoneCalibrationSamples=null; phoneCalibrationTimer=null;
+      $('calibrate-phone-button').disabled=false;
+      if(!result.valid) { $('phone-calibration-status').textContent=result.reason; speak('Calibration was not successful. Please stand still and try again.'); return; }
+      phoneCalibration=result; currentAssessment.phone_calibration=result; saveCurrentAssessment(); renderPhoneCalibration(); speak('Phone reference saved. You are ready for the balance trials.');
+    },5000);
+  };
   function currentProtocol() { return { repetitions: Assessment.REPETITIONS, duration_seconds: Assessment.TRIAL_DURATION_SECONDS }; }
   function applyProtocol(repetitions, durationSeconds) {
     Assessment.setProtocol({ repetitions, durationSeconds });
@@ -666,7 +729,10 @@
     if (Date.now()<restUntil) return;
     if (!$('protocol-ready').checked) { log('Check the standardized setup before recording.','warn'); return; }
     if (!activeTrialId || completedTrialNames().includes(activeTrialId)) return;
-    clearInterval(readinessPoll); runCountdown();
+    clearInterval(readinessPoll);
+    const trial=Assessment.TRIALS.find(t=>t.trial_name===activeTrialId);
+    $('start-trial-button').disabled=true;
+    speak(describeTrial(trial),()=>{ if(!trialRecording && activeTrialId===trial.trial_name) runCountdown(); });
   };
   $('redo-trial-button').onclick=()=>{
     if (trialRecording) return;
@@ -760,6 +826,8 @@
     const trial=Assessment.TRIALS.find(t=>t.trial_name===activeTrialId);
     const record=Assessment.buildTrialRecord({trial,sessionId:currentAssessment.assessment_id,startedAt,endedAt:new Date().toISOString(),phoneSamples:phoneSampleBuffer,cameraFrames:cameraFrameBuffer});
     record.phone_acceleration_source=latestPhoneSample?.acceleration_source||'unknown';
+    record.phone_calibration=phoneCalibration ? { ...phoneCalibration } : null;
+    record.phone_neutral_relative_tilt=Assessment.computeNeutralRelativeTilt(phoneSampleBuffer,phoneCalibration);
     if (record.phone_acceleration_source==='including_gravity') record.measurement_notes.phone_total_sway+=' This trial used the gravity-including fallback; magnitude includes ~9.81 m/s² at rest.';
     record.protocol_context={camera_view:'front',side_camera_requested:$('require-side-camera').checked,side_camera_connected:sideFrameBuffer.length>0,side_camera_facing:sideCameraFacing,phone_placement:'L5 vertical',participant_code:$('protocol-participant-code').value.trim()||null,recording_start_iso:startedAt};
     record.side_camera=sideFrameBuffer.length ? SideView.analyze(sideFrameBuffer,trial,sideCameraFacing) : null;
@@ -783,6 +851,7 @@
     $('trial-live-status').textContent=`Complete: ${cameraFrameBuffer.length} front frames, ${sideFrameBuffer.length} side frames, ${phoneSampleBuffer.length} phone samples. Use Redo last trial if there was an error.`;
     log(`Trial complete: ${trial.trial_name}. ${cameraFrameBuffer.length} front frames, ${sideFrameBuffer.length} side frames, ${phoneSampleBuffer.length} phone samples.`);
     completionTone();
+    speak('Trial complete. Rest for at least thirty seconds before the next trial.');
     activeTrialId=null;
     refreshTrialAnalysisView();
     setTimeout(()=>{ renderChecklist(); selectNextIncompleteTrial(); },1200);
@@ -828,6 +897,7 @@
     }
     localStorage.removeItem('assessment-current');
     renderFailedHistoryList();
+    speak('Assessment complete. Your results are ready. Select Store data to save them in a named folder.');
   }
   function renderFailedHistoryList() {
     const history=loadHistory();
@@ -881,11 +951,55 @@
   function showView(view) {
     $('home-view').style.display = view==='home' ? 'block' : 'none';
     $('results-view').style.display = view==='results' ? 'block' : 'none';
+    $('stored-view').style.display = view==='stored' ? 'block' : 'none';
     $('nav-home-btn').classList.toggle('active', view==='home');
     $('nav-results-btn').classList.toggle('active', view==='results');
+    $('nav-stored-btn').classList.toggle('active', view==='stored');
   }
   $('nav-home-btn').onclick = () => showView('home');
   $('nav-results-btn').onclick = () => { showView('results'); refreshTrialAnalysisView(); renderFailedHistoryList(); };
+  $('nav-stored-btn').onclick = () => { showView('stored'); renderStoredFolders(); };
+  async function renderStoredFolders() {
+    const container=$('stored-folders');
+    try {
+      const folders=await RawStore.listAssessmentFolders();
+      if(!folders.length) { container.textContent='No named folders yet. Open Results and choose Store data in named folder.'; return; }
+      container.innerHTML=folders.map(folder=>{
+        const count=Object.values(folder.assessment?.trials||{}).filter(t=>t?.status==='completed').length;
+        const trials=Object.values(folder.assessment?.trials||{}).sort((a,b)=>(a.trial_number||0)-(b.trial_number||0));
+        const value=(n,unit='')=>Number.isFinite(n)?`${n.toFixed(2)}${unit}`:'—';
+        const rows=trials.map(trial=>`<tr><td>${escapeHtml(trial.trial_name?.replace(/_/g,' ')||'Trial')}</td><td>${escapeHtml(trial.status||'unknown')}</td><td>${value(trial.phone_balance?.total_sway,' m/s²')}</td><td>${value(trial.camera_posture?.trunk?.mean_lean,'°')}</td><td>${value(trial.phone_neutral_relative_tilt?.roll_rms_from_neutral_deg,'°')}</td></tr>`).join('');
+        return `<details class="stored-folder"><summary>${escapeHtml(folder.name)} · ${new Date(folder.saved_at).toLocaleString()}</summary><p>${count} completed trials · ${folder.assessment?.analyzed?'assessment analyzed':'assessment in progress'}</p><p>Reference: ${folder.assessment?.phone_calibration?.valid?'phone neutral calibrated':'phone neutral not calibrated'}</p><div class="table-wrap"><table class="summary-table"><thead><tr><th>Trial</th><th>Status</th><th>Phone RMS</th><th>Trunk lean</th><th>Phone roll vs neutral</th></tr></thead><tbody>${rows}</tbody></table></div><p class="status-line">Download includes calculated results and any locally retained raw samples and landmarks. It does not include camera video.</p><button class="outline download-folder" type="button" data-id="${escapeHtml(folder.id)}">Download data JSON</button></details>`;
+      }).join('');
+      container.querySelectorAll('.download-folder').forEach(button=>button.onclick=()=>downloadFolder(button.dataset.id));
+    } catch(error) { container.textContent=`Unable to open stored folders: ${error.message}`; }
+  }
+  async function downloadFolder(id) {
+    const container=$('stored-folders');
+    try {
+      const folder=(await RawStore.listAssessmentFolders()).find(item=>item.id===id);
+      if(!folder) throw new Error('Folder not found.');
+      const raw_trials={};
+      for(const [trialName,trial] of Object.entries(folder.assessment?.trials||{})) {
+        if(trial?.trial_id) raw_trials[trialName]=await RawStore.loadRawTrial(trial.trial_id);
+      }
+      const blob=new Blob([JSON.stringify({...folder,raw_trials},null,2)],{type:'application/json'});
+      const url=URL.createObjectURL(blob), link=document.createElement('a');
+      link.href=url; link.download=`${folder.name.replace(/[^a-z0-9_-]+/gi,'-').slice(0,60)||'swaymetry'}-${folder.id.slice(0,8)}.json`;
+      link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+    } catch(error) { container.insertAdjacentHTML('afterbegin',`<p class="bad">${escapeHtml(error.message)}</p>`); }
+  }
+  $('store-data-button').onclick=async()=>{
+    if(!currentAssessment || !Object.keys(currentAssessment.trials||{}).length) { $('store-data-status').textContent='Record at least one trial before storing data.'; return; }
+    const suggested=$('protocol-participant-code').value.trim();
+    const name=window.prompt('Name this assessment folder (participant code recommended; avoid full patient names on shared devices):',suggested)?.trim();
+    if(!name) return;
+    if(name.length>80) { $('store-data-status').textContent='Use a folder name under 80 characters.'; return; }
+    const history=loadHistory().findLast?.(entry=>entry.assessment?.assessment?.assessment_id===currentAssessment.assessment_id);
+    const folder={id:crypto.randomUUID(),name,saved_at:new Date().toISOString(),assessment:JSON.parse(JSON.stringify(currentAssessment)),analysis:history?.analysis||null};
+    try { await RawStore.saveAssessmentFolder(folder); $('store-data-status').textContent=`Saved to “${name}” in Stored data on this device. Download a copy for backup.`; renderStoredFolders(); }
+    catch(error) { $('store-data-status').textContent=`Could not store data: ${error.message}`; }
+  };
   renderFailedHistoryList();
   ResultsUI.init({ $, escapeHtml, getAssessment: () => currentAssessment });
   function showAnalysisSubview(which) {
@@ -986,8 +1100,10 @@
   $('protocol-ready').onchange = () => { if (!trialRecording) updateReadinessDisplay(checkReadinessNow()); };
   $('require-side-camera').onchange = () => { if (!trialRecording) updateReadinessDisplay(checkReadinessNow()); };
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
-  if (pair.mode!=='camera') { const cc=$('checklist-card'); if (cc) cc.style.display='none'; $('side-camera-card').style.display='none'; $('side-view-column').style.display='none'; $('camera-grid').classList.add('sensor-only'); } else {
+  if (pair.mode!=='camera') { const cc=$('checklist-card'); if (cc) cc.style.display='none'; $('phone-calibration-card').style.display='none'; $('side-camera-card').style.display='none'; $('side-view-column').style.display='none'; $('camera-grid').classList.add('sensor-only'); } else {
     currentAssessment=loadAssessment();
+    phoneCalibration=currentAssessment.phone_calibration?.valid?currentAssessment.phone_calibration:null;
+    renderPhoneCalibration();
     const saved=currentAssessment.protocol||{};
     try { applyProtocol(Number(saved.repetitions)||3,Number(saved.duration_seconds)||30); }
     catch { applyProtocol(3,30); }

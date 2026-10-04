@@ -62,6 +62,26 @@
   const safeRange = a => a.length ? Math.max(...a) - Math.min(...a) : null;
   const deg = r => r * 180 / Math.PI;
 
+  function computePhoneNeutral(samples) {
+    const usable = (samples || []).map(s => s.gravity_including).filter(g => g && [g.x, g.y, g.z].every(Number.isFinite));
+    if (usable.length < 20) return { valid: false, reason: 'Not enough gravity readings. Keep the phone connected and retry.' };
+    const vector = { x: mean(usable.map(g => g.x)), y: mean(usable.map(g => g.y)), z: mean(usable.map(g => g.z)) };
+    const magnitude = Math.hypot(vector.x, vector.y, vector.z);
+    const motionRms = rms(usable.map(g => Math.hypot(g.x - vector.x, g.y - vector.y, g.z - vector.z)));
+    if (magnitude < 7.5 || magnitude > 11.5 || motionRms > 0.65) return { valid: false, reason: 'Phone moved during calibration or gravity readings were unreliable. Stand still and retry.', sample_count: usable.length, gravity_magnitude_m_s2: round(magnitude), motion_rms_m_s2: round(motionRms) };
+    const orientations = (samples || []).map(s => s.orientation).filter(o => o && Number.isFinite(o.roll) && Number.isFinite(o.pitch));
+    return { valid: true, sample_count: usable.length, gravity_vector_device_m_s2: { x: round(vector.x), y: round(vector.y), z: round(vector.z) }, gravity_magnitude_m_s2: round(magnitude), motion_rms_m_s2: round(motionRms), neutral_orientation_deg: orientations.length >= 20 ? { roll: round(mean(orientations.map(o => o.roll))), pitch: round(mean(orientations.map(o => o.pitch))) } : null, yaw_anatomical_alignment: 'unknown', measured_at: new Date().toISOString() };
+  }
+
+  function computeNeutralRelativeTilt(samples, neutral) {
+    const reference = neutral?.valid && neutral.neutral_orientation_deg;
+    if (!reference) return { available: false, reason: 'Device orientation was unavailable during phone calibration.' };
+    const delta = (a, b) => ((a - b + 180) % 360 + 360) % 360 - 180;
+    const orientation = (samples || []).map(s => s.orientation).filter(o => o && Number.isFinite(o.roll) && Number.isFinite(o.pitch));
+    if (orientation.length < 20) return { available: false, reason: 'Not enough orientation samples in this trial.' };
+    return { available: true, units: 'degrees', roll_rms_from_neutral_deg: round(rms(orientation.map(o => delta(o.roll, reference.roll)))), pitch_rms_from_neutral_deg: round(rms(orientation.map(o => delta(o.pitch, reference.pitch)))), sample_count: orientation.length, note: 'Phone tilt relative to quiet standing; not anatomical trunk angles or force-plate displacement.' };
+  }
+
   function landmarkVisible(l) { return !!l && l.confidence != null && l.confidence > VISIBILITY_THRESHOLD; }
 
   function fullBodyInFrame(landmarks) {
@@ -491,7 +511,7 @@
     TRIALS, CONDITIONS, get REPETITIONS() { return REPETITIONS; }, get TRIAL_DURATION_SECONDS() { return TRIAL_DURATION_SECONDS; }, setProtocol, LANDMARK_INDEX, FULL_BODY_LANDMARKS,
     fullBodyInFrame, landmarkVisible, frontalKneeDeviation,
     captureLandmarkFrame, capturePhoneSample,
-    computePhoneMetrics, computeCameraMetrics, buildTrialRecord,
+    computePhoneMetrics, computePhoneNeutral, computeNeutralRelativeTilt, computeCameraMetrics, buildTrialRecord,
     computeComparisons, buildAssessmentJSON,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -107,7 +107,14 @@
       ['RMS acceleration magnitude', fmt(record.phone_balance?.total_sway, ' m/s²', 3)],
       ['Mean acceleration-change rate (jerk proxy)', fmt(record.phone_balance?.mean_sway_velocity, ' m/s³', 3)],
       ['Acceleration spike events', record.phone_balance?.large_corrections],
-    ]) + `<p class="status-line">Source: ${escapeHtml(record.phone_acceleration_source || 'unknown')}. These are phone acceleration measures, not lower-back displacement, body velocity, or force-plate center of pressure. The gravity-including fallback is not comparable with linear acceleration. Device x/y/z axes are not anatomical directions unless orientation is calibrated.</p>`;
+    ]) + `<p class="status-line">Source: ${escapeHtml(record.phone_acceleration_source || 'unknown')}. These are phone acceleration measures, not lower-back displacement, body velocity, or force-plate center of pressure. The gravity-including fallback is not comparable with linear acceleration. Device x/y/z axes are not anatomical directions from a quiet-standing reference alone.</p>`;
+    const neutral=record.phone_neutral_relative_tilt;
+    html += `<h4 class="results-group-heading">Phone tilt relative to neutral standing</h4>`;
+    html += neutral?.available ? metricGrid([
+      ['Roll RMS from neutral', fmt(neutral.roll_rms_from_neutral_deg, '°', 2)],
+      ['Pitch RMS from neutral', fmt(neutral.pitch_rms_from_neutral_deg, '°', 2)],
+      ['Orientation samples', neutral.sample_count],
+    ]) + '<p class="status-line">These are phone orientation changes from the 5-second quiet-standing reference, not anatomical trunk angles. Raw motion measurements are unchanged.</p>' : `<p class="status-line">Unavailable: ${escapeHtml(neutral?.reason || 'Phone not calibrated for this trial.')}</p>`;
 
     html += `<h4 class="results-group-heading">iPad sagittal view</h4>`;
     if (record.side_camera) {
