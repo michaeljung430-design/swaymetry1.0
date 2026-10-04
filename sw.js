@@ -1,14 +1,17 @@
-const CACHE = 'motion-lab-v1';
+const CACHE = 'motion-lab-v4-side-camera';
 const ASSETS = [
   './',
   './index.html',
   './movement-sensor-diagnostics.html',
+  './side-camera.html',
   './qrcode.js',
   './assessment.js',
   './biomechanics.js',
   './interpretation.js',
   './raw-store.js',
   './results-ui.js',
+  './side-view.js',
+  './validation.js',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',

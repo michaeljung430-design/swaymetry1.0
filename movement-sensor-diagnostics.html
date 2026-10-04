@@ -16,12 +16,13 @@
   <script src="./interpretation.js"></script>
   <script src="./raw-store.js"></script>
   <script src="./results-ui.js"></script>
+  <script src="./side-view.js"></script>
+  <script src="./validation.js"></script>
   <script>
     // Only the camera station needs body-pose tracking; skip the download
     // entirely on a phone opened in sensor mode (saves bandwidth/time there).
     if (new URLSearchParams(location.search).get('mode') !== 'sensor') {
-      ['https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js',
-       'https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js'].forEach(src => {
+      ['https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js'].forEach(src => {
         const s = document.createElement('script'); s.src = src; s.async = false; document.head.appendChild(s);
       });
     }
@@ -187,7 +188,7 @@
   <div id="home-view">
   <section id="checklist-card">
     <div class="trial-row" id="trial-checklist"></div>
-    <p class="progress-caption"><span id="assessment-progress-text">0/6 completed</span></p>
+    <p class="progress-caption"><span id="assessment-progress-text">0/18 completed</span></p>
     <div class="progress" style="max-width:220px"><i id="assessment-progress-bar" style="width:0%"></i></div>
   </section>
 
@@ -202,6 +203,23 @@
   </div>
   <p id="camera-status" class="status-line">Not requested.</p>
   <p id="motion-status" class="status-line">Place the phone vertically at the lower back (L5), then enable the sensor.</p>
+  <p id="rest-status" class="status-line">Rest 30–60 seconds between trials.</p>
+  <section class="card" id="protocol-card">
+    <strong>Standardized trial setup</strong>
+    <p>Keep the camera fixed, full body and both feet visible, phone firmly vertical at L5, footwear and marked foot positions unchanged. Stand upright with hands on hips; do not touch support. For each condition record three 30-second runs, resting 30–60 seconds between runs. Record any step, support touch, arm movement, early stop, or eyes opening as a protocol deviation.</p>
+    <div class="button-row"><label>Computer camera view <select id="protocol-camera-view"><option value="front">Front</option></select></label><label>Anonymous participant code <input id="protocol-participant-code" autocomplete="off" placeholder="e.g. P001"></label></div>
+    <label><input type="checkbox" id="require-side-camera"> Include iPad side camera in this session</label>
+    <label><input type="checkbox" id="protocol-ready"> Setup checked for this session</label>
+  </section>
+  <section class="card" id="side-camera-card">
+    <strong>iPad sagittal camera</strong>
+    <p>On the iPad, open the side-camera link in Safari, choose which side faces the iPad, tap Enable iPad camera, and keep the whole body visible. The computer controls trial start and stop. Only pose landmarks are transmitted; video stays on the iPad.</p>
+    <div class="button-row"><button class="outline" id="copy-side-link">Copy iPad camera link</button></div>
+    <div id="side-qr" class="qr-box" style="display:inline-block"></div>
+    <p id="side-camera-status" class="status-line">Not connected. The front-only protocol still works when the iPad option is off.</p>
+    <canvas id="side-preview" width="320" height="240" style="display:block;width:100%;max-width:320px;height:auto;background:#101820;border-radius:12px"></canvas>
+    <p class="status-line">Side-view stick figure and angle estimates are 2D projections, not 3D motion capture.</p>
+  </section>
 
   <p class="trial-eyebrow" id="active-trial-title">Trial</p>
   <div class="stage-wrap">
@@ -222,6 +240,7 @@
     <span class="chip" id="check-camera">Checking…</span>
     <span class="chip" id="check-phone">Checking…</span>
     <span class="chip" id="check-body">Checking…</span>
+    <span class="chip" id="check-side">iPad side view optional</span>
   </div>
   <p id="form-result" class="live-pill" style="display:none"></p>
 
@@ -261,7 +280,8 @@
   <div id="results-view" style="display:none">
     <section class="card" id="assessment-results-card">
       <strong>Assessment Results (AI Summary)</strong>
-      <p id="results-status">Complete all six trials to see your AI-generated analysis here.</p>
+      <p id="results-status">Complete all 18 trials to see the session analysis here.</p>
+      <div id="condition-means"></div>
       <div id="results-body"></div>
       <div id="failed-history-list"></div>
     </section>
@@ -280,6 +300,14 @@
         </div>
       </div>
     </section>
+    <section class="card" id="validation-card">
+      <strong>Laboratory validation workspace</strong>
+      <p>Import a Vicon CSV from the <em>same recorded trial</em>. The file stays in this browser. The filename is not used to determine the condition—confirm it using the laboratory log. When iPad side-view data exists, its knee-flexion proxy is used; otherwise the computer front-view proxy is used. The app plays a tone at trial start; capture that tone in the laboratory recording or make another shared visible cue, then enter the measured offset below. If no common cue was recorded, timing agreement is unknown. This exploratory comparison is not a clinical accuracy claim.</p>
+      <div class="button-row"><label>Reference CSV <input id="validation-file" type="file" accept=".csv,text/csv"></label><label>Vicon time minus app time (s) <input id="validation-offset" type="number" min="-10" max="10" step="0.01" value="0"></label></div>
+      <label><input id="validation-confirm" type="checkbox"> I confirmed the participant, condition, repetition, and a shared sync cue in both recordings</label>
+      <div class="button-row"><button class="outline" id="validation-run" type="button">Compare selected trial</button><button class="outline" id="validation-export" type="button" disabled>Download comparison report</button></div>
+      <div id="validation-result" role="status"><p>Choose a completed trial above, then import its laboratory CSV.</p></div>
+    </section>
   </div>
   </div>
   </div>
@@ -288,9 +316,10 @@
 (() => {
   const $ = id => document.getElementById(id);
   const logNode = $('log'), envNode = $('environment'), video = $('preview'), overlay = $('overlay');
-  let stream, cameraScore = 0, imuScore = 0, motionEnabled = false, landmarks = null, formBaseline = null, holistic, detecting = false, audioContext;
+  let stream, cameraScore = 0, imuScore = 0, motionEnabled = false, landmarks = null, formBaseline = null, poseTracker, detecting = false, audioContext;
   let trialRecording = false, trialTimer = null, countdownTimer = null, activeTrialId = null, readinessPoll = null, trialStartPerf = null, pendingBodyWait = null;
-  let phoneSampleBuffer = [], cameraFrameBuffer = [], lastPhoneSampleAt = 0, currentAssessment = null, latestPhoneSample = null;
+  let restUntil = 0;
+  let phoneSampleBuffer = [], cameraFrameBuffer = [], sideFrameBuffer = [], lastPhoneSampleAt = 0, lastSideStatusAt = 0, currentAssessment = null, latestPhoneSample = null, sideCameraFacing = 'left';
   let latestOrientation = { roll: null, pitch: null, yaw: null };
   window.addEventListener('deviceorientation', e => { latestOrientation = { roll: e.gamma ?? null, pitch: e.beta ?? null, yaw: e.alpha ?? null }; });
   const query=new URLSearchParams(location.search);
@@ -299,18 +328,51 @@
   if (!sessionId && isCameraRole) { try { sessionId=localStorage.getItem('movement-session'); } catch {} }
   if (!sessionId) sessionId=crypto.randomUUID();
   if (isCameraRole) { try { localStorage.setItem('movement-session', sessionId); } catch {} }
-  const pair={mode:isCameraRole?'camera':'sensor',session:sessionId,socket:null,remoteRecording:false,remoteSamples:[],peer:false};
+  const pair={mode:isCameraRole?'camera':'sensor',session:sessionId,socket:null,remoteRecording:false,remoteSamples:[],peer:false,sidePeer:false,sideReady:false};
   const PUBLIC_BASE='https://kinetic-ai-4.onrender.com';
   function pairingLink(){const relay=encodeURIComponent($('relay-url').value.trim());return `${PUBLIC_BASE}/movement-sensor-diagnostics.html?mode=sensor&session=${pair.session}&relay=${relay}`;}
+  function sideCameraLink(){const relay=encodeURIComponent($('relay-url').value.trim());return `${PUBLIC_BASE}/side-camera.html?session=${pair.session}&relay=${relay}`;}
+  function updateSideQr(){const box=$('side-qr');if(!box||pair.mode!=='camera')return;try{const qr=qrcode(0,'M');qr.addData(sideCameraLink());qr.make();box.innerHTML=qr.createSvgTag({cellSize:3,margin:6});}catch(error){box.textContent=`QR unavailable: ${error.message}`;}}
   function updateQr(){const wrap=$('pair-qr-wrap'),box=$('pair-qr');if(!wrap||!box||pair.mode!=='camera')return;const link=pairingLink();if(!$('relay-url').value.trim()){wrap.style.display='none';return;}try{const qr=qrcode(0,'M');qr.addData(link);qr.make();box.innerHTML=qr.createSvgTag({cellSize:4,margin:8});wrap.style.display='block';}catch(error){log(`QR generation failed — ${error.message}`,'warn');wrap.style.display='none';}}
   function sendPair(message){if(pair.socket?.readyState===WebSocket.OPEN)pair.socket.send(JSON.stringify({session:pair.session,...message}));}
+  function handleSideMessage(event) {
+    if (pair.mode !== 'camera') return;
+    let message; try { message = JSON.parse(event.data); } catch { return; }
+    if (message.type === 'peer' && message.role === 'side') {
+      pair.sidePeer = !!message.connected;
+      if (!message.connected) pair.sideReady = false;
+      $('side-camera-status').textContent = message.connected ? 'iPad joined. Waiting for body tracking…' : 'iPad disconnected.';
+    }
+    if (message.type === 'side_status') {
+      pair.sideReady = !!message.ready;
+      sideCameraFacing = message.camera_side === 'right' ? 'right' : 'left';
+      lastSideStatusAt = Date.now();
+      $('side-camera-status').textContent = message.ready ? `iPad connected · ${sideCameraFacing} side · body visible` : 'iPad connected, but body landmarks are not visible.';
+    }
+    if ((message.type === 'pose' || message.type === 'side_status') && message.frame?.landmarks) {
+      const frame = message.frame;
+      if (Number.isFinite(frame.image_width) && Number.isFinite(frame.image_height) && frame.image_width > 0 && frame.image_height > 0) {
+        const canvas = $('side-preview'); canvas.width = frame.image_width; canvas.height = frame.image_height;
+        SideView.drawStick(canvas.getContext('2d'), frame.landmarks, canvas.width, canvas.height, sideCameraFacing);
+        if (message.type === 'pose' && trialRecording && sideFrameBuffer.length < 600) sideFrameBuffer.push(frame);
+      }
+    }
+  }
   function connectRelay(){const url=$('relay-url').value.trim();if(!url)return $('pairing-detail').textContent='Add your relay address first.';const localOk=url.startsWith('ws://')&&location.protocol!=='https:';if(!url.startsWith('wss://')&&!localOk)return $('pairing-detail').textContent='Use a wss:// relay address (ws:// only works when this page itself is not HTTPS, e.g. the desktop app on your local network).';localStorage.setItem('movement-relay',url);pair.socket?.close();pair.socket=new WebSocket(url);pair.socket.onopen=()=>{sendPair({type:'join',role:pair.mode});$('pairing-status').textContent=`Connected as ${pair.mode} · session ${pair.session}`;log(`Relay socket open. Joining as ${pair.mode}, session ${pair.session}.`);};let sampleLogCount=0,wasStale=true;pair.socket.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='joined')log(`Relay confirmed join: role=${m.role}, session=${m.session}.`);if(pair.mode==='camera'&&m.type==='sample'){updateImuScore(m.sample);lastPhoneSampleAt=Date.now();latestPhoneSample=m.sample;if(wasStale){log('Receiving phone samples.');wasStale=false;}if(sampleLogCount<3){log(`Sample #${++sampleLogCount} from phone: x=${m.sample.ax},y=${m.sample.ay},z=${m.sample.az}.`);}if(trialRecording){phoneSampleBuffer.push({timestamp_seconds:m.sample.elapsedTrial??((performance.now()-trialStartPerf)/1000),accelerometer:{x:m.sample.ax??null,y:m.sample.ay??null,z:m.sample.az??null},gyroscope:{x:m.sample.agx??null,y:m.sample.agy??null,z:m.sample.agz??null},orientation:m.sample.orientation||{roll:null,pitch:null,yaw:null}});}}if(pair.mode==='sensor'&&m.type==='control'){pair.remoteRecording=m.action==='start';if(m.action==='start')trialStartPerf=performance.now();$('motion-status').textContent=pair.remoteRecording?'Recording for the paired camera station…':'Paired camera station stopped the trial.';}if(m.type==='peer'){if(m.role==='sensor')pair.peer=m.connected;log(`Peer message: role=${m.role}, connected=${m.connected}. pair.peer is now ${pair.peer}.`);$('pairing-detail').textContent=`${m.role} ${m.connected?'connected':'disconnected'} to this session.`;}if(m.type==='error'){log(`Relay error: ${m.message}`,'warn');$('pairing-detail').textContent=m.message;}};pair.socket.onerror=()=>{log('Relay WebSocket error.','warn');$('pairing-detail').textContent='Relay connection failed. Confirm the wss:// address.';};pair.socket.onclose=()=>{log('Relay socket closed.','warn');if(pair.socket)$('pairing-status').textContent='Relay disconnected. Reconnect before the next trial.';};}
-  function renderPairing(){const defaultRelay=PUBLIC_BASE.replace('https://','wss://').replace('http://','ws://');const stored=localStorage.getItem('movement-relay')||query.get('relay')||defaultRelay;$('relay-url').value=stored;$('pairing-actions').innerHTML=pair.mode==='camera'?'<button id="connect-relay">Connect camera station</button><button class="secondary" id="copy-pair">Copy L5 sensor link</button>':'<button id="connect-relay">Connect L5 sensor</button>'; $('pairing-detail').textContent=pair.mode==='camera'?`Session ${pair.session}: copy the link (or scan the QR) on the L5 phone after connecting your relay.`:'This phone streams motion samples to the paired camera station.';$('connect-relay').onclick=connectRelay;if(pair.mode==='camera'){$('copy-pair').onclick=()=>navigator.clipboard.writeText(pairingLink()).then(()=>{$('pairing-detail').textContent='Sensor link copied. Open it on the L5 phone.';});$('relay-url').addEventListener('input',updateQr);updateQr();}}
+  function connectRelayWithSide() {
+    connectRelay();
+    if (pair.socket && pair.mode === 'camera') {
+      pair.socket.addEventListener('message', handleSideMessage);
+      pair.socket.addEventListener('close', () => { pair.sidePeer = false; pair.sideReady = false; });
+    }
+  }
+  function renderPairing(){const defaultRelay=PUBLIC_BASE.replace('https://','wss://').replace('http://','ws://');const stored=localStorage.getItem('movement-relay')||query.get('relay')||defaultRelay;$('relay-url').value=stored;$('pairing-actions').innerHTML=pair.mode==='camera'?'<button id="connect-relay">Connect camera station</button><button class="secondary" id="copy-pair">Copy L5 sensor link</button>':'<button id="connect-relay">Connect L5 sensor</button>'; $('pairing-detail').textContent=pair.mode==='camera'?`Session ${pair.session}: copy the link (or scan the QR) on the L5 phone after connecting your relay.`:'This phone streams motion samples to the paired camera station.';$('connect-relay').onclick=connectRelayWithSide;if(pair.mode==='camera'){$('copy-pair').onclick=()=>navigator.clipboard.writeText(pairingLink()).then(()=>{$('pairing-detail').textContent='Sensor link copied. Open it on the L5 phone.';});$('relay-url').addEventListener('input',()=>{updateQr();updateSideQr();});updateQr();updateSideQr();}}
   const baseline = [], poseBaseline = [];
   function log(message, kind='') { const line = `[${new Date().toLocaleTimeString()}] ${message}`; logNode.textContent = line + '\n' + logNode.textContent; console.log(line); if (kind) console[kind](line); }
   function row(label, value, cls='') { const dt=document.createElement('dt'), dd=document.createElement('dd'); dt.textContent=label; dd.textContent=value; if(cls) dd.className=cls; envNode.append(dt,dd); return dd; }
   function isIOSWebView() { const ua=navigator.userAgent; return /iP(hone|ad|od)/.test(ua) && /AppleWebKit/.test(ua) && !/Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua); }
   function completionTone() { try { audioContext ||= new (window.AudioContext||window.webkitAudioContext)(); const beep=delay=>{const osc=audioContext.createOscillator(), gain=audioContext.createGain(); osc.frequency.value=880; gain.gain.setValueAtTime(.0001,audioContext.currentTime+delay); gain.gain.exponentialRampToValueAtTime(.16,audioContext.currentTime+delay+.02); gain.gain.exponentialRampToValueAtTime(.0001,audioContext.currentTime+delay+.18); osc.connect(gain).connect(audioContext.destination); osc.start(audioContext.currentTime+delay);osc.stop(audioContext.currentTime+delay+.2)}; beep(0);beep(.27); } catch { log('Completion tone unavailable in this browser.','warn'); } }
+  function startTone() { try { audioContext ||= new (window.AudioContext||window.webkitAudioContext)(); const osc=audioContext.createOscillator(), gain=audioContext.createGain(); osc.frequency.value=1175; gain.gain.setValueAtTime(.0001,audioContext.currentTime); gain.gain.exponentialRampToValueAtTime(.16,audioContext.currentTime+.02); gain.gain.exponentialRampToValueAtTime(.0001,audioContext.currentTime+.2); osc.connect(gain).connect(audioContext.destination); osc.start(); osc.stop(audioContext.currentTime+.21); } catch { log('Start sync tone unavailable in this browser.','warn'); } }
   async function diagnostics() {
     row('Secure context', String(window.isSecureContext), window.isSecureContext?'ok':'bad');
     row('Top-level document', String(window.top === window), window.top===window?'ok':'warn');
@@ -321,7 +383,7 @@
     const policy = document.permissionsPolicy || document.featurePolicy;
     row('Camera policy (if exposed)', policy ? String(policy.allowsFeature('camera')) : 'Browser does not expose this diagnostic', policy && !policy.allowsFeature('camera')?'bad':'');
     if (navigator.permissions?.query) try { const p=await navigator.permissions.query({name:'camera'}); row('Camera permission state', p.state, p.state==='denied'?'bad':p.state==='granted'?'ok':'warn'); p.onchange=()=>log(`Camera permission changed to ${p.state}`); } catch { row('Camera permission state', 'Not queryable in this browser'); }
-    if (pair.mode==='camera') { const trackerDd=row('Pose tracker (MediaPipe)', typeof Holistic==='undefined'?'Loading…':'Loaded', typeof Holistic==='undefined'?'warn':'ok'); if (typeof Holistic==='undefined') waitForHolistic(15000).then(ready=>{ trackerDd.textContent=ready?'Loaded':'Failed to load (check internet connection)'; trackerDd.className=ready?'ok':'bad'; }); }
+    if (pair.mode==='camera') { const trackerDd=row('Body-only pose tracker (MediaPipe)', typeof Pose==='undefined'?'Loading…':'Loaded', typeof Pose==='undefined'?'warn':'ok'); if (typeof Pose==='undefined') waitForPose(15000).then(ready=>{ trackerDd.textContent=ready?'Loaded':'Failed to load (check internet connection)'; trackerDd.className=ready?'ok':'bad'; }); }
   }
   function drawGauge() { const c=$('gauge').getContext('2d'), w=320, value=Math.max(0,Math.min(100,100-(cameraScore*.55+imuScore*.45))); c.clearRect(0,0,w,w); c.lineWidth=22; c.strokeStyle='#354151'; c.beginPath(); c.arc(160,160,110,0,Math.PI*2); c.stroke(); c.strokeStyle=value>70?'#178a4c':value>45?'#b5750a':'#c22a2a'; c.beginPath(); c.arc(160,160,110,-Math.PI/2,-Math.PI/2+Math.PI*2*(value/100)); c.stroke(); c.fillStyle='#0f2942'; c.font='bold 50px system-ui'; c.textAlign='center'; c.fillText(Math.round(value),160,176); c.fillStyle='#707c8c'; c.font='16px system-ui'; c.fillText('stability',160,204); requestAnimationFrame(drawGauge); }
   function poseDeg(r) { return r*180/Math.PI; }
@@ -354,8 +416,8 @@
     overlay.width=video.videoWidth||640; overlay.height=video.videoHeight||480;
     const octx=overlay.getContext('2d');
     octx.clearRect(0,0,overlay.width,overlay.height);
-    if (!l) { drawPhoneIndicator(octx, null); return; }
-    try { drawConnectors(octx,l,POSE_CONNECTIONS,{color:'#0f9488',lineWidth:3}); drawLandmarks(octx,l,{color:'#f2b134',lineWidth:1,radius:3}); } catch {}
+    if (!l) return;
+    SideView.drawStick(octx,l,overlay.width,overlay.height,'left');
     const lh=l[23], rh=l[24];
     const hip = (lh && rh && (lh.visibility==null||lh.visibility>.4) && (rh.visibility==null||rh.visibility>.4)) ? {x:(lh.x+rh.x)/2,y:(lh.y+rh.y)/2} : null;
     drawPhoneIndicator(octx, hip);
@@ -364,10 +426,10 @@
   function updateLivePose() { const m=landmarks&&poseMetrics(landmarks); if (!m) { $('tracked').textContent='No full body'; return null; } $('tracked').textContent='33 body landmarks'; $('trunk').textContent=`${m.trunk.toFixed(1)}°`; $('pelvis').textContent=`${m.pelvis.toFixed(1)}°`; $('knees').textContent=`${m.leftKnee.toFixed(0)}° / ${m.rightKnee.toFixed(0)}°`; updateCameraScore(m.hip); return m; }
   function formCheck() { const m=updateLivePose(); if (!m) { $('form-result').style.display='block'; $('form-result').textContent='Stand fully in the camera frame first.'; return; } formBaseline=m; const notes=[]; if (m.trunk>8) notes.push('reduce trunk lean'); if (m.pelvis>6) notes.push('level the pelvis'); if (m.leftKnee<155||m.rightKnee<155) notes.push('stand tall without a deep knee bend'); $('form-result').style.display='block'; $('form-result').textContent=notes.length?`Form check: ${notes.join('; ')}.`:'Form check passed: upright, level posture detected.'; }
   function onPoseResults(r) { landmarks=r.poseLandmarks||null; drawSkeleton(landmarks); updateLivePose(); if (trialRecording) cameraFrameBuffer.push(Assessment.captureLandmarkFrame(landmarks, (performance.now()-trialStartPerf)/1000)); }
-  function detectLoop() { if (!stream) return; if (holistic && !detecting && video.readyState>=2) { detecting=true; holistic.send({image:video}).catch(()=>{}).finally(()=>{detecting=false;}); } requestAnimationFrame(detectLoop); }
-  function waitForHolistic(timeoutMs=6000) { return new Promise(resolve=>{ if (typeof Holistic!=='undefined') return resolve(true); const started=performance.now(); const check=()=>{ if (typeof Holistic!=='undefined') return resolve(true); if (performance.now()-started>timeoutMs) return resolve(false); setTimeout(check,150); }; check(); }); }
+  function detectLoop() { if (!stream) return; if (poseTracker && !detecting && video.readyState>=2) { detecting=true; poseTracker.send({image:video}).catch(()=>{}).finally(()=>{detecting=false;}); } requestAnimationFrame(detectLoop); }
+  function waitForPose(timeoutMs=6000) { return new Promise(resolve=>{ if (typeof Pose!=='undefined') return resolve(true); const started=performance.now(); const check=()=>{ if (typeof Pose!=='undefined') return resolve(true); if (performance.now()-started>timeoutMs) return resolve(false); setTimeout(check,150); }; check(); }); }
   function updateImuScore(sample) { const magnitude=Math.hypot(sample.x,sample.y,sample.z); baseline.push(magnitude); if(baseline.length>45) baseline.shift(); const mean=baseline.reduce((s,n)=>s+n,0)/baseline.length; imuScore=Math.min(100,Math.abs(magnitude-mean)*18); $('imu-score').textContent=`${imuScore.toFixed(1)} / 100`; }
-  function onMotion(event) { const a=event.acceleration || event.accelerationIncludingGravity; const r=event.rotationRate; if (!a) return; const sample={t:performance.now(),x:+(a.x||0),y:+(a.y||0),z:+(a.z||0),gx:+(r?.alpha||0),gy:+(r?.beta||0),gz:+(r?.gamma||0),ax:a.x??null,ay:a.y??null,az:a.z??null,agx:r?.alpha??null,agy:r?.beta??null,agz:r?.gamma??null,orientation:{...latestOrientation},elapsedTrial:(pair.mode==='sensor'&&trialStartPerf!=null)?(performance.now()-trialStartPerf)/1000:null}; updateImuScore(sample); if(pair.mode==='sensor')sendPair({type:'sample',sample}); }
+  function onMotion(event) { const linear=event.acceleration && [event.acceleration.x,event.acceleration.y,event.acceleration.z].every(Number.isFinite); const a=linear?event.acceleration:event.accelerationIncludingGravity; const r=event.rotationRate; if (!a) return; const sample={t:performance.now(),x:+(a.x||0),y:+(a.y||0),z:+(a.z||0),gx:+(r?.alpha||0),gy:+(r?.beta||0),gz:+(r?.gamma||0),ax:a.x??null,ay:a.y??null,az:a.z??null,acceleration_source:linear?'linear_acceleration':'including_gravity',agx:r?.alpha??null,agy:r?.beta??null,agz:r?.gamma??null,orientation:{...latestOrientation},elapsedTrial:(pair.mode==='sensor'&&trialStartPerf!=null)?(performance.now()-trialStartPerf)/1000:null}; updateImuScore(sample); if(pair.mode==='sensor')sendPair({type:'sample',sample}); }
   $('camera-button').onclick = async () => {
     if (!navigator.mediaDevices?.getUserMedia) { $('camera-status').textContent='Unavailable: this page is not a secure, camera-capable browser context.'; log('Camera API unavailable (usually non-HTTPS or blocked webview).','warn'); return; }
     $('camera-button').disabled=true; $('camera-status').textContent='Requesting camera permission…'; log('Calling getUserMedia with video.facingMode=ideal:user.');
@@ -378,12 +440,12 @@
     finally { $('camera-button').disabled=false; }
   };
   async function startPoseTracking() {
-    if (!holistic) {
-      const ready = await waitForHolistic();
-      if (!ready || typeof Holistic==='undefined') { $('camera-status').textContent='Camera running, but the body tracker failed to load (check your internet connection). Pose metrics will be unavailable this session.'; log('MediaPipe Holistic unavailable.','warn'); detectLoop(); return; }
-      holistic = new Holistic({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${f}` });
-      holistic.setOptions({ modelComplexity:1, smoothLandmarks:true, minDetectionConfidence:.5, minTrackingConfidence:.5 });
-      holistic.onResults(onPoseResults);
+    if (!poseTracker) {
+      const ready = await waitForPose();
+      if (!ready || typeof Pose==='undefined') { $('camera-status').textContent='Camera running, but the body tracker failed to load (check your internet connection). Pose metrics will be unavailable this session.'; log('MediaPipe Pose unavailable.','warn'); detectLoop(); return; }
+      poseTracker = new Pose({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}` });
+      poseTracker.setOptions({ modelComplexity:1, smoothLandmarks:true, minDetectionConfidence:.5, minTrackingConfidence:.5 });
+      poseTracker.onResults(onPoseResults);
     }
     $('camera-status').textContent='Camera running. Tracking body landmarks — keep the whole body in view.';
     $('form-button').disabled=false;
@@ -403,7 +465,7 @@
   $('form-button').onclick=formCheck;
   function loadAssessment() { try { const raw=localStorage.getItem('assessment-current'); if (raw) { const parsed=JSON.parse(raw); if (parsed && parsed.trials) return parsed; } } catch {} return { assessment_id: crypto.randomUUID(), date: new Date().toISOString(), trials: {} }; }
   function saveCurrentAssessment() { try { localStorage.setItem('assessment-current', JSON.stringify(currentAssessment)); } catch {} }
-  function completedTrialNames() { return Object.keys(currentAssessment.trials).filter(k => currentAssessment.trials[k]?.status === 'completed'); }
+  function completedTrialNames() { return Object.keys(currentAssessment.trials).filter(k => currentAssessment.trials[k]?.status === 'completed' && currentAssessment.trials[k]?.protocol_valid !== false); }
   function loadHistory() { try { return JSON.parse(localStorage.getItem('assessment-history') || '[]'); } catch { return []; } }
   function saveToHistory(assessmentJson, analysis) {
     const history=loadHistory();
@@ -437,9 +499,9 @@
       btn.onclick=()=>selectTrial(trial.trial_name);
       list.append(btn);
     });
-    $('assessment-progress-text').textContent=`${doneNames.length}/6 completed`;
-    $('assessment-progress-bar').style.width=`${(doneNames.length/6)*100}%`;
-    if (doneNames.length===6 && !currentAssessment.analyzed) runFullAnalysis();
+    $('assessment-progress-text').textContent=`${doneNames.length}/${Assessment.TRIALS.length} completed`;
+    $('assessment-progress-bar').style.width=`${(doneNames.length/Assessment.TRIALS.length)*100}%`;
+    if (doneNames.length===Assessment.TRIALS.length && !currentAssessment.analyzed) runFullAnalysis();
   }
   function selectTrial(trialName) {
     if (trialRecording) return;
@@ -472,7 +534,9 @@
     const phoneOk=peerSeen && dataFresh;
     const namedLandmarks=landmarks ? Assessment.captureLandmarkFrame(landmarks,0).landmarks : null;
     const bodyOk=Assessment.fullBodyInFrame(namedLandmarks);
-    return {cameraOk,phoneOk,bodyOk,peerSeen,dataFresh};
+    const sideRequired=$('require-side-camera').checked;
+    const sideOk=pair.sidePeer && pair.sideReady && Date.now()-lastSideStatusAt<3500;
+    return {cameraOk,phoneOk,bodyOk,peerSeen,dataFresh,sideRequired,sideOk,restRemaining:Math.max(0,Math.ceil((restUntil-Date.now())/1000))};
   }
   function updateReadinessDisplay(r) {
     $('check-camera').textContent=r.cameraOk?'Camera ready':'Enable the camera first';
@@ -481,7 +545,10 @@
     $('check-phone').className=`chip ${r.phoneOk?'ok':'bad'}`;
     $('check-body').textContent=r.bodyOk?'Full body visible':'Step back — full body not in frame';
     $('check-body').className=`chip ${r.bodyOk?'ok':'warn'}`;
-    $('start-trial-button').disabled=!(r.cameraOk&&r.phoneOk);
+    $('check-side').textContent=r.sideOk?'iPad side camera ready':r.sideRequired?'iPad side camera required':'iPad side camera optional';
+    $('check-side').className=`chip ${r.sideOk?'ok':r.sideRequired?'bad':''}`;
+    $('rest-status').textContent=r.restRemaining ? `Rest before the next trial: ${r.restRemaining} seconds remaining (30-second minimum).` : 'Rest interval complete. Keep setup and foot positions unchanged.';
+    $('start-trial-button').disabled=!(r.cameraOk&&r.phoneOk&&(!r.sideRequired||r.sideOk)&&$('protocol-ready').checked&&r.restRemaining===0);
   }
   function startReadinessPolling() {
     if (readinessPoll) clearInterval(readinessPoll);
@@ -490,6 +557,8 @@
     readinessPoll=setInterval(check,400);
   }
   $('start-trial-button').onclick=()=>{
+    if (Date.now()<restUntil) return;
+    if (!$('protocol-ready').checked) { log('Check the standardized setup before recording.','warn'); return; }
     if (currentAssessment.trials[activeTrialId]?.status==='completed' && !confirm('This trial already has recorded data. Re-recording it will permanently replace that data. Continue?')) return;
     clearInterval(readinessPoll); runCountdown();
   };
@@ -505,11 +574,11 @@
       if (n>0) { $('trial-countdown').textContent=n; return; }
       clearInterval(countdownTimer);
       const r=checkReadinessNow();
-      if (!r.cameraOk || !r.phoneOk) {
+      if (!r.cameraOk || !r.phoneOk || (r.sideRequired && !r.sideOk)) {
         $('trial-countdown').style.display='none';
         $('trial-live-status').style.display='inline';
-        $('trial-live-status').textContent = !r.cameraOk ? 'Cancelled: camera unavailable.' : 'Cancelled: phone disconnected.';
-        log('Trial cancelled at countdown end — camera/phone check failed.','warn');
+        $('trial-live-status').textContent = !r.cameraOk ? 'Cancelled: camera unavailable.' : !r.phoneOk ? 'Cancelled: phone disconnected.' : 'Cancelled: iPad side camera unavailable.';
+        log('Trial cancelled at countdown end — device check failed.','warn');
         startReadinessPolling();
         return;
       }
@@ -525,9 +594,9 @@
     if (pendingBodyWait) clearInterval(pendingBodyWait);
     pendingBodyWait=setInterval(()=>{
       const r=checkReadinessNow();
-      if (!r.cameraOk || !r.phoneOk) {
+      if (!r.cameraOk || !r.phoneOk || (r.sideRequired && !r.sideOk)) {
         clearInterval(pendingBodyWait); pendingBodyWait=null;
-        $('trial-live-status').textContent = !r.cameraOk ? 'Cancelled: camera unavailable.' : 'Cancelled: phone disconnected.';
+        $('trial-live-status').textContent = !r.cameraOk ? 'Cancelled: camera unavailable.' : !r.phoneOk ? 'Cancelled: phone disconnected.' : 'Cancelled: iPad side camera unavailable.';
         startReadinessPolling();
         return;
       }
@@ -536,9 +605,10 @@
   }
   function beginTrialRecording() {
     trialRecording=true;
-    phoneSampleBuffer=[]; cameraFrameBuffer=[];
+    phoneSampleBuffer=[]; cameraFrameBuffer=[]; sideFrameBuffer=[];
     trialStartPerf=performance.now();
     const startedAt=new Date().toISOString();
+    startTone();
     sendPair({type:'control',action:'start',trial:activeTrialId});
     $('trial-countdown').style.display='none';
     $('trial-live-status').style.display='inline';
@@ -556,15 +626,28 @@
     sendPair({type:'control',action:'stop'});
     const trial=Assessment.TRIALS.find(t=>t.trial_name===activeTrialId);
     const record=Assessment.buildTrialRecord({trial,sessionId:currentAssessment.assessment_id,startedAt,endedAt:new Date().toISOString(),phoneSamples:phoneSampleBuffer,cameraFrames:cameraFrameBuffer});
+    record.phone_acceleration_source=latestPhoneSample?.acceleration_source||'unknown';
+    if (record.phone_acceleration_source==='including_gravity') record.measurement_notes.phone_total_sway+=' This trial used the gravity-including fallback; magnitude includes ~9.81 m/s² at rest.';
+    record.protocol_context={camera_view:'front',side_camera_requested:$('require-side-camera').checked,side_camera_connected:sideFrameBuffer.length>0,side_camera_facing:sideCameraFacing,phone_placement:'L5 vertical',participant_code:$('protocol-participant-code').value.trim()||null,recording_start_iso:startedAt};
+    record.side_camera=sideFrameBuffer.length ? SideView.analyze(sideFrameBuffer,trial,sideCameraFacing) : null;
+    record.protocol_context.side_capture_complete=!!record.side_camera && record.side_camera.frame_count>=100 && record.side_camera.covered_seconds>=25 && record.side_camera.knee_tracking_fraction>=0.5 && (record.side_camera.first_frame_seconds ?? 99)<=3 && (record.side_camera.last_frame_seconds ?? 0)>=27;
+    record.sync_marker={app_time_seconds:0,type:'audible_start_tone',reference_observed:false};
     try {
-      record.interpreted=Interpretation.analyzeTrial(cameraFrameBuffer,phoneSampleBuffer,{trial_name:trial.trial_name,stance:trial.stance,tested_leg:trial.tested_leg,eyes:trial.eyes,duration_seconds:Assessment.TRIAL_DURATION_SECONDS});
+      record.interpreted=Interpretation.analyzeTrial(cameraFrameBuffer,phoneSampleBuffer,{trial_name:trial.trial_name,stance:trial.stance,tested_leg:trial.tested_leg,eyes:trial.eyes,duration_seconds:Assessment.TRIAL_DURATION_SECONDS},{cameraOrientation:$('protocol-camera-view').value});
       record.interpreted.movement_summary=Interpretation.generateMovementSummary(record.interpreted);
     } catch (error) { log(`Interpretation pipeline failed for ${trial.trial_name}: ${error.message}`,'warn'); }
+    record.protocol_valid=!confirm('Did a protocol error occur in this trial? Select OK for a step, support touch, hands leaving hips, eyes opening in an eyes-closed trial, or an early stop. This run will be excluded from three-run means. Select Cancel if none occurred.');
+    if (record.protocol_context.side_camera_requested && !record.protocol_context.side_capture_complete) {
+      record.protocol_valid=false;
+      log('Required iPad side recording was incomplete; repeat this trial.','warn');
+      $('side-camera-status').textContent='Side recording incomplete. This trial must be repeated.';
+    }
     currentAssessment.trials[trial.trial_name]=record;
+    restUntil=Date.now()+30_000;
     saveCurrentAssessment();
-    RawStore.saveRawTrial(record.trial_id,{trial_name:trial.trial_name,cameraFrames:cameraFrameBuffer,phoneSamples:phoneSampleBuffer}).catch(error=>log(`Could not save raw trial data: ${error.message}`,'warn'));
-    $('trial-live-status').textContent=`Complete: ${cameraFrameBuffer.length} frames, ${phoneSampleBuffer.length} samples.`;
-    log(`Trial complete: ${trial.trial_name}. ${cameraFrameBuffer.length} camera frames, ${phoneSampleBuffer.length} phone samples.`);
+    RawStore.saveRawTrial(record.trial_id,{trial_name:trial.trial_name,cameraFrames:cameraFrameBuffer,sideFrames:sideFrameBuffer,phoneSamples:phoneSampleBuffer}).catch(error=>log(`Could not save raw trial data: ${error.message}`,'warn'));
+    $('trial-live-status').textContent=`Complete: ${cameraFrameBuffer.length} front frames, ${sideFrameBuffer.length} side frames, ${phoneSampleBuffer.length} phone samples.`;
+    log(`Trial complete: ${trial.trial_name}. ${cameraFrameBuffer.length} front frames, ${sideFrameBuffer.length} side frames, ${phoneSampleBuffer.length} phone samples.`);
     completionTone();
     activeTrialId=null;
     refreshTrialAnalysisView();
@@ -575,16 +658,28 @@
     el.innerHTML=`<dl><dt>Clinician summary</dt><dd>${escapeHtml(analysis.clinician_summary||'—')}</dd><dt>Patient summary</dt><dd>${escapeHtml(analysis.patient_summary||'—')}</dd><dt>Data quality</dt><dd>${escapeHtml(analysis.data_quality?.overall_quality||'—')}</dd></dl>${renderList('Balance findings',analysis.balance_findings)}${renderList('Postural findings',analysis.postural_findings)}${renderList('Single-leg findings',analysis.single_leg_findings)}${renderList('Left/right asymmetries',analysis.left_right_asymmetries)}${renderList('Items for PT review',analysis.items_for_pt_review)}`;
     $('results-body').append(el);
   }
+  function renderConditionMeans(assessmentJson) {
+    const rows=Assessment.CONDITIONS.map(condition=>{
+      const block=assessmentJson.condition_means[condition.id];
+      const phone=block.within_session_repeatability.phone_rms_acceleration_m_s2;
+      const camera=block.within_session_repeatability.camera_image_plane_path_normalized_units;
+      const side=block.within_session_repeatability.side_knee_flexion_proxy_degrees;
+      const cell=value=>value==null?'—':Number(value).toFixed(3);
+      return `<tr><td>${escapeHtml(condition.label)}</td><td>${block.completed_repetitions}/3</td><td>${cell(phone.mean)} ± ${cell(phone.sd)} m/s²</td><td>${cell(camera.mean)} ± ${cell(camera.sd)} normalized units</td><td>${side.n ? `${cell(side.mean)} ± ${cell(side.sd)}° (${side.n} runs)` : '—'}</td><td>${block.excluded_protocol_error_repetitions}</td></tr>`;
+    }).join('');
+    $('condition-means').innerHTML=`<h4>Three-run condition averages</h4><div class="table-wrap"><table class="summary-table"><thead><tr><th>Condition</th><th>Valid runs</th><th>Phone RMS acceleration (mean ± SD)</th><th>Front camera image-plane path (mean ± SD)</th><th>iPad side knee-flexion proxy (mean ± SD)</th><th>Protocol errors excluded</th></tr></thead><tbody>${rows}</tbody></table></div><p class="status-line">These are within-session descriptive values, not validated normal ranges. Front and side camera views, phone acceleration, lab center of mass, and force-plate center of pressure are distinct measures.</p>`;
+  }
   async function runFullAnalysis() {
     currentAssessment.analyzed=true; saveCurrentAssessment();
     showView('results');
     refreshTrialAnalysisView();
-    $('results-status').textContent='All six trials complete. Calculating comparisons and sending for analysis…';
+    $('results-status').textContent='All 18 trials complete. Calculating three-run condition means and sending for analysis…';
     $('results-body').innerHTML='';
     const trials=Assessment.TRIALS.map(t=>currentAssessment.trials[t.trial_name]);
-    const assessmentJson=Assessment.buildAssessmentJSON({assessmentId:currentAssessment.assessment_id,patientId:null,date:currentAssessment.date,assessmentNumber:loadHistory().length+1,trials});
+    const assessmentJson=Assessment.buildAssessmentJSON({assessmentId:currentAssessment.assessment_id,patientId:$('protocol-participant-code').value.trim()||null,date:currentAssessment.date,assessmentNumber:loadHistory().length+1,trials});
+    renderConditionMeans(assessmentJson);
     try {
-      const aiPayload={...assessmentJson,trials:assessmentJson.trials.map(t=>t.interpreted?{...t,interpreted:Interpretation.stripTimeSeriesForAI(t.interpreted)}:t)};
+      const aiPayload={...assessmentJson,assessment:{...assessmentJson.assessment,patient_id:null},trials:assessmentJson.trials.map(t=>({ ...t,protocol_context:t.protocol_context?{...t.protocol_context,participant_code:null}:undefined,interpreted:t.interpreted?Interpretation.stripTimeSeriesForAI(t.interpreted):undefined }))};
       const response=await fetch(`${PUBLIC_BASE}/api/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(aiPayload)});
       if (!response.ok) throw new Error(`Server responded ${response.status}`);
       const analysis=await response.json();
@@ -592,7 +687,7 @@
       saveToHistory(assessmentJson,analysis);
       $('results-status').textContent='Assessment complete.';
     } catch (error) {
-      $('results-status').textContent=`Assessment saved, but AI analysis failed: ${error.message}. Your six trials and their measurements are safely stored.`;
+      $('results-status').textContent=`Assessment saved, but AI analysis failed: ${error.message}. Your 18 trials and their measurements are safely stored.`;
       log(`AI analysis failed — ${error.message}`,'warn');
       saveToHistory(assessmentJson,null);
     }
@@ -680,10 +775,90 @@
   $('nav-interpreted-btn').onclick = () => showAnalysisSubview('interpreted');
   $('nav-raw-btn').onclick = () => showAnalysisSubview('raw');
   $('trial-select').onchange = () => { ResultsUI.setCurrentTrial($('trial-select').value); renderCurrentAnalysisSubview(); };
+  let validationReport = null;
+  const validationNumber = value => Number.isFinite(value) ? value.toFixed(2) : '—';
+  $('validation-run').onclick = async () => {
+    const output = $('validation-result');
+    const file = $('validation-file').files[0];
+    const trialName = $('trial-select').value;
+    const record = currentAssessment?.trials?.[trialName];
+    validationReport = null;
+    $('validation-export').disabled = true;
+    if (!file || !record || !$('validation-confirm').checked) {
+      output.textContent = 'Select a completed app trial and laboratory CSV, then confirm the participant, condition, repetition, and sync cue match.';
+      return;
+    }
+    try {
+      output.textContent = 'Reading the reference CSV locally…';
+      const reference = Validation.parseViconCsv(await file.text());
+      const side = record.side_camera?.measured_leg || (record.tested_leg === 'left' ? 'left' : 'right');
+      const useSideView = !!record.side_camera?.knee_flexion_series?.length;
+      const appSeries = useSideView ? record.side_camera.knee_flexion_series : record.interpreted?.[`${side}_knee`]?.knee_angle?.samples;
+      const refColumn = reference.columns[`${side === 'left' ? 'L' : 'R'}KneeAngles.X`];
+      if (!appSeries?.length || !refColumn) throw new Error(`This pair lacks the ${side} knee angle series needed for the exploratory comparison.`);
+      const flexionProxy = useSideView ? appSeries : appSeries.map(point => ({ t: point.t, value: Number.isFinite(point.value) ? 180 - point.value : null }));
+      const stats = Validation.compareSeries(flexionProxy, { times: reference.times, values: refColumn.values }, $('validation-offset').value);
+      const com = ['X', 'Y', 'Z'].map(axis => {
+        const values = reference.columns[`CentreOfMass.${axis}`]?.values.filter(Number.isFinite) || [];
+        return { axis, range_mm: values.length ? Math.max(...values) - Math.min(...values) : null };
+      });
+      validationReport = {
+        status: 'exploratory_not_validated',
+        reference_file: file.name,
+        app_trial_id: record.trial_id,
+        condition: record.condition_id,
+        repetition: record.repetition,
+        participant_code: record.protocol_context?.participant_code || null,
+        camera_view: useSideView ? 'iPad side' : 'computer front',
+        phone_placement: record.protocol_context?.phone_placement || null,
+        reference_rate_hz: reference.rate_hz,
+        reference_duration_seconds: reference.duration_seconds,
+        duration_mismatch_seconds: Math.abs(reference.duration_seconds - record.duration_seconds),
+        sync_offset_seconds: Number($('validation-offset').value),
+        compared_signals: [`App ${useSideView ? 'iPad side-view' : 'computer front-view'} ${side} 2D knee flexion proxy (180° − image-plane interior angle)`, `Vicon ${side} knee X angle`],
+        difference_direction: 'app minus Vicon',
+        units: 'degrees',
+        statistics: stats,
+        reference_com_range: com,
+        limitations: [
+          'The app uses a 2D image-plane knee angle; Vicon knee X is a 3D model-defined rotation. These definitions are not interchangeable.',
+          'A camera-only frontal view does not directly measure sagittal knee flexion.',
+          'The offset must be measured from an independent synchronization cue, not chosen to minimize error.',
+          'Phone acceleration cannot be validated against force-plate CoP or motion-capture CoM without a matched sensor and coordinate transformation.',
+          'The pointwise ±1.96 SD band is descriptive only: adjacent time samples are correlated, so it is not a formal Bland–Altman limit of agreement across independent trials or people.',
+          'One trial cannot establish population accuracy or test–retest reliability.',
+        ],
+      };
+      output.innerHTML = `<p><strong>Exploratory comparison only</strong> — ${escapeHtml(record.trial_name)} vs ${escapeHtml(file.name)}. ${stats.matched_samples} matched samples; lab recording ${validationNumber(reference.duration_seconds)} s at ${reference.rate_hz} Hz.</p>${Math.abs(reference.duration_seconds - record.duration_seconds) > 2 ? `<p class="warn">Duration mismatch: app protocol ${record.duration_seconds} s, reference ${validationNumber(reference.duration_seconds)} s. Verify that these are the same repetition and use only the synchronized overlap.</p>` : ''}<div class="metric-grid">${[
+        ['Bias (app − lab)', `${validationNumber(stats.bias)}°`],
+        ['Mean absolute difference', `${validationNumber(stats.mae)}°`],
+        ['RMSE', `${validationNumber(stats.rmse)}°`],
+        ['Pointwise ±1.96 SD band', `${validationNumber(stats.descriptive_difference_band[0])}° to ${validationNumber(stats.descriptive_difference_band[1])}°`],
+      ].map(([label, value]) => `<div class="metric-card"><small>${escapeHtml(label)}</small><b>${escapeHtml(value)}</b></div>`).join('')}</div><p>Reference center-of-mass range: ${com.map(item => `${item.axis} ${validationNumber(item.range_mm)} mm`).join('; ')}. This is not the same as the app's image-plane body-center path or force-plate center of pressure.</p><p class="status-line">The app's knee angle and the lab's model-based rotation are different definitions. These numbers describe disagreement, not verified accuracy. Use a matching camera view and agreed joint-angle definition before setting pass/fail limits.</p>`;
+      $('validation-export').disabled = false;
+    } catch (error) { output.textContent = `Comparison unavailable: ${error.message}`; }
+  };
+  $('validation-export').onclick = () => {
+    if (!validationReport) return;
+    const blob = new Blob([JSON.stringify(validationReport, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `swaymetry-validation-${validationReport.app_trial_id}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  $('protocol-ready').onchange = () => { if (!trialRecording) updateReadinessDisplay(checkReadinessNow()); };
+  $('require-side-camera').onchange = () => { if (!trialRecording) updateReadinessDisplay(checkReadinessNow()); };
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
-  if (pair.mode!=='camera') { const cc=$('checklist-card'); if (cc) cc.style.display='none'; } else { currentAssessment=loadAssessment(); renderChecklist(); selectNextIncompleteTrial(); }
+  if (pair.mode!=='camera') { const cc=$('checklist-card'); if (cc) cc.style.display='none'; $('side-camera-card').style.display='none'; } else { currentAssessment=loadAssessment(); renderChecklist(); selectNextIncompleteTrial(); }
+  $('copy-side-link').onclick = async () => {
+    const link = sideCameraLink();
+    try { await navigator.clipboard.writeText(link); $('side-camera-status').textContent='iPad link copied. Open it in Safari on the iPad.'; }
+    catch { $('side-camera-status').textContent=`Open this link on the iPad: ${link}`; }
+  };
   renderPairing(); diagnostics(); drawGauge(); setupInstall();
-  if ($('relay-url').value.trim()) connectRelay();
+  if ($('relay-url').value.trim()) connectRelayWithSide();
 })();
 </script>
 </body>

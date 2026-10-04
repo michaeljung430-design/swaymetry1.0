@@ -1,8 +1,8 @@
-// Pure calculation layer for the six-trial balance assessment.
+// Pure calculation layer for the six-condition, three-repetition assessment.
 // No DOM access here -- this module only turns recorded samples into
 // trial JSON, so it can be loaded in a browser or tested under Node.
 (function (global) {
-  const TRIALS = [
+  const CONDITIONS = [
     { id: 'double_leg_eyes_open', trial_number: 1, trial_name: 'double_leg_eyes_open', stance: 'double_leg', tested_leg: null, eyes: 'open', label: 'Double-leg — Eyes Open', instruction: 'Stand with both feet comfortably apart. Look straight ahead.' },
     { id: 'double_leg_eyes_closed', trial_number: 2, trial_name: 'double_leg_eyes_closed', stance: 'double_leg', tested_leg: null, eyes: 'closed', label: 'Double-leg — Eyes Closed', instruction: 'Stand with both feet comfortably apart. Close your eyes once recording starts.' },
     { id: 'right_leg_eyes_open', trial_number: 3, trial_name: 'right_leg_eyes_open', stance: 'single_leg', tested_leg: 'right', eyes: 'open', label: 'Right Leg — Eyes Open', instruction: 'Stand on your right leg. Look straight ahead.' },
@@ -11,7 +11,17 @@
     { id: 'left_leg_eyes_closed', trial_number: 6, trial_name: 'left_leg_eyes_closed', stance: 'single_leg', tested_leg: 'left', eyes: 'closed', label: 'Left Leg — Eyes Closed', instruction: 'Stand on your left leg. Close your eyes once recording starts.' },
   ];
 
-  const TRIAL_DURATION_SECONDS = 20;
+  const REPETITIONS = 3;
+  const TRIALS = CONDITIONS.flatMap(condition => Array.from({ length: REPETITIONS }, (_, i) => ({
+    ...condition,
+    id: `${condition.id}_rep_${i + 1}`,
+    trial_name: `${condition.trial_name}_rep_${i + 1}`,
+    condition_id: condition.id,
+    repetition: i + 1,
+    trial_number: (condition.trial_number - 1) * REPETITIONS + i + 1,
+    label: `${condition.label} · ${i + 1}/${REPETITIONS}`,
+  })));
+  const TRIAL_DURATION_SECONDS = 30;
 
   // Every landmark MediaPipe's Pose model produces (33 points), not just the
   // subset used in balance calculations -- the Raw Results view preserves
@@ -124,9 +134,9 @@
     const correctionEvents = detectThresholdEvents(magSeries, magMean + 2 * magStd, 'large_corrective_movement', v => `Large sway movement detected (acceleration magnitude ${v.toFixed(2)} m/s²).`);
     const suddenAccelEvents = detectThresholdEvents(velocitySeries, velMean + 3 * velStd, 'sudden_acceleration', () => 'Sudden change in acceleration detected.');
     const balanceLossEvents = detectThresholdEvents(magSeries, magMean + 4 * magStd, 'possible_balance_loss', v => `Large, abrupt movement detected (magnitude ${v.toFixed(2)} m/s²) -- possible balance loss.`);
-    const dominant_direction = lateralRange >= apRange
-      ? (mean(x) >= 0 ? 'right' : 'left')
-      : (mean(z) >= 0 ? 'forward' : 'backward');
+    // Axis signs are device coordinates, not anatomical directions without
+    // an orientation calibration. Do not assign left/right or front/back.
+    const dominant_direction = lateralRange >= apRange ? 'device x axis' : 'device z axis';
     return {
       metrics: {
         mean_lateral_sway: round(meanAbs(x)),
@@ -330,6 +340,8 @@
       trial_id: `${sessionId}_${trial.id}`,
       trial_number: trial.trial_number,
       trial_name: trial.trial_name,
+      condition_id: trial.condition_id || trial.trial_name,
+      repetition: trial.repetition || 1,
       stance: trial.stance,
       tested_leg: trial.tested_leg,
       eyes: trial.eyes,
@@ -338,6 +350,12 @@
       started_at: startedAt,
       ended_at: endedAt,
       phone_balance: phone.metrics,
+      measurement_notes: {
+        phone_total_sway: 'RMS acceleration magnitude in m/s²; not displacement or force-plate center of pressure.',
+        phone_mean_sway_velocity: 'Mean absolute derivative of acceleration magnitude in m/s³ (jerk proxy); not body velocity.',
+        camera_angles: '2D image-plane angles; not equivalent to 3D laboratory joint rotations.',
+        camera_ap: 'Image vertical coordinate; not anatomical anterior-posterior displacement.',
+      },
       camera_posture: camera.posture,
       single_leg_metrics: camera.singleLeg,
       events,
@@ -388,18 +406,62 @@
   }
 
   function buildAssessmentJSON({ assessmentId, patientId, date, assessmentNumber, trials }) {
-    const trialsById = Object.fromEntries(trials.map(t => [t.trial_name, t]));
+    const conditionMeans = {};
+    for (const condition of CONDITIONS) {
+      const group = trials.filter(t => (t.condition_id || t.trial_name) === condition.id && t.protocol_valid !== false);
+      const avg = get => { const values = group.map(get).filter(Number.isFinite); return values.length ? round(mean(values)) : null; };
+      const repeatability = get => {
+        const values = group.map(get).filter(Number.isFinite);
+        if (values.length < 2) return { n: values.length, mean: values.length ? round(mean(values)) : null, sd: null, cv_percent: null };
+        const m = mean(values);
+        const sd = Math.sqrt(values.reduce((sum, value) => sum + (value - m) ** 2, 0) / (values.length - 1));
+        return { n: values.length, mean: round(m), sd: round(sd), cv_percent: m === 0 ? null : round(Math.abs(100 * sd / m), 2) };
+      };
+      conditionMeans[condition.id] = {
+        condition_id: condition.id,
+        completed_repetitions: group.length,
+        excluded_protocol_error_repetitions: trials.filter(t => (t.condition_id || t.trial_name) === condition.id && t.protocol_valid === false).length,
+        phone_balance: {
+          total_sway: avg(t => t.phone_balance?.total_sway),
+          mean_sway_velocity: avg(t => t.phone_balance?.mean_sway_velocity),
+          large_corrections: avg(t => t.phone_balance?.large_corrections),
+        },
+        camera_posture: {
+          trunk: { mean_lean: avg(t => t.camera_posture?.trunk?.mean_lean) },
+          pelvis: { mean_tilt: avg(t => t.camera_posture?.pelvis?.mean_tilt) },
+          left_knee: { movement_variability: avg(t => t.camera_posture?.left_knee?.movement_variability) },
+          right_knee: { movement_variability: avg(t => t.camera_posture?.right_knee?.movement_variability) },
+        },
+        side_camera: {
+          mean_knee_flexion_proxy_deg: avg(t => t.side_camera?.mean_knee_flexion_proxy_deg),
+          mean_hip_flexion_proxy_deg: avg(t => t.side_camera?.mean_hip_flexion_proxy_deg),
+          mean_trunk_lean_deg: avg(t => t.side_camera?.mean_trunk_lean_deg),
+        },
+        single_leg_metrics: {
+          opposite_foot_touchdowns: avg(t => t.single_leg_metrics?.opposite_foot_touchdowns),
+          successful_stance_duration: avg(t => t.single_leg_metrics?.successful_stance_duration),
+          trunk_compensation: avg(t => t.single_leg_metrics?.trunk_compensation),
+        },
+        within_session_repeatability: {
+          phone_rms_acceleration_m_s2: repeatability(t => t.phone_balance?.total_sway),
+          camera_image_plane_path_normalized_units: repeatability(t => t.interpreted?.balance_stability?.total_sway_path),
+          camera_trunk_lean_degrees: repeatability(t => t.camera_posture?.trunk?.mean_lean),
+          side_knee_flexion_proxy_degrees: repeatability(t => t.side_camera?.mean_knee_flexion_proxy_deg),
+        },
+      };
+    }
     return {
       assessment: { assessment_id: assessmentId, patient_id: patientId || null, date, assessment_number: assessmentNumber ?? null },
-      protocol: { trial_duration_seconds: TRIAL_DURATION_SECONDS, number_of_trials: TRIALS.length },
+      protocol: { trial_duration_seconds: TRIAL_DURATION_SECONDS, number_of_conditions: CONDITIONS.length, repetitions_per_condition: REPETITIONS, number_of_trials: TRIALS.length },
       trials,
-      comparisons: computeComparisons(trialsById),
+      condition_means: conditionMeans,
+      comparisons: computeComparisons(conditionMeans),
       historical_comparison: { baseline_available: false, previous_assessment_available: false, changes: [] },
     };
   }
 
   global.Assessment = {
-    TRIALS, TRIAL_DURATION_SECONDS, LANDMARK_INDEX, FULL_BODY_LANDMARKS,
+    TRIALS, CONDITIONS, REPETITIONS, TRIAL_DURATION_SECONDS, LANDMARK_INDEX, FULL_BODY_LANDMARKS,
     fullBodyInFrame, landmarkVisible,
     captureLandmarkFrame, capturePhoneSample,
     computePhoneMetrics, computeCameraMetrics, buildTrialRecord,

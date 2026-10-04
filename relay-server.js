@@ -88,7 +88,7 @@ websocketServer.on('connection', socket => {
     }
 
     if (message.type === 'join') {
-      if (!['camera', 'sensor'].includes(message.role)) {
+      if (!['camera', 'sensor', 'side'].includes(message.role)) {
         send(socket, { type: 'error', message: 'Invalid device role.' });
         return;
       }
@@ -119,7 +119,9 @@ websocketServer.on('connection', socket => {
     if (!session || message.session !== session) return;
     if (message.type === 'sample' && role !== 'sensor') return;
     if (message.type === 'control' && role !== 'camera') return;
-    if (!['sample', 'control'].includes(message.type)) return;
+    if (['pose', 'side_status'].includes(message.type) && role !== 'side') return;
+    if (!['sample', 'control', 'pose', 'side_status'].includes(message.type)) return;
+    if (message.type === 'pose' && (!message.frame || typeof message.frame !== 'object' || raw.length > 16000)) return;
 
     for (const peer of roomFor(session)) if (peer !== socket) send(peer, message);
   });
