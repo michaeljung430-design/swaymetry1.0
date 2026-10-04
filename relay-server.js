@@ -119,11 +119,12 @@ websocketServer.on('connection', socket => {
     if (!session || message.session !== session) return;
     if (message.type === 'sample' && role !== 'sensor') return;
     if (message.type === 'control' && role !== 'camera') return;
-    if (['pose', 'side_status'].includes(message.type) && role !== 'side') return;
-    if (!['sample', 'control', 'pose', 'side_status'].includes(message.type)) return;
+    if (['pose', 'side_status', 'side_preview'].includes(message.type) && role !== 'side') return;
+    if (!['sample', 'control', 'pose', 'side_status', 'side_preview'].includes(message.type)) return;
     if (message.type === 'pose' && (!message.frame || typeof message.frame !== 'object' || raw.length > 16000)) return;
+    if (message.type === 'side_preview' && (raw.length > 100000 || typeof message.image !== 'string' || !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(message.image))) return;
 
-    for (const peer of roomFor(session)) if (peer !== socket) send(peer, message);
+    for (const peer of roomFor(session)) if (peer !== socket && (message.type !== 'side_preview' || peer.role === 'camera')) send(peer, message);
   });
 
   socket.on('close', () => {
