@@ -1,4 +1,4 @@
-const CACHE = 'motion-lab-v7-clear-results';
+const CACHE = 'motion-lab-v8-sensor-screen';
 const ASSETS = [
   './',
   './index.html',

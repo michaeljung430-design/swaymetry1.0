@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <link rel="manifest" href="./manifest.json">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap">
   <meta name="theme-color" content="#0d5c56">
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -186,10 +187,54 @@
     .raw-table td,.raw-table th{white-space:nowrap;padding:5px 7px}
     .stored-folder{border:1px solid var(--line);border-radius:var(--radius-md);padding:14px;margin:12px 0;background:#fff}
     .stored-folder summary{font-weight:700}
+    /* Wearable phone (?mode=sensor): a single-purpose screen; everything else is hidden. */
+    .role-sensor main > :not(#sensor-view) { display:none !important }
+    .sensor-view { --s-accent:#0f766e; --s-soft:#e3f4f1; --s-ok:#15803d; --s-ok-soft:#e5f5ea; --s-ink:#0f1f2b; --s-muted:#566573; --s-line:#e1e7eb;
+      max-width:440px; margin:0 auto; text-align:center; padding:4px 0 32px; font-family:"Atkinson Hyperlegible",system-ui,-apple-system,sans-serif }
+    .sensor-view[hidden] { display:none }
+    .sensor-brand { display:flex; align-items:center; gap:10px; justify-content:center; font-weight:700; font-size:1.05rem; color:var(--s-ink) }
+    .sensor-brand span { width:34px; height:34px; border-radius:10px; background:linear-gradient(145deg,#14b8a6,#0f766e); display:grid; place-items:center }
+    .sensor-hero { width:132px; height:132px; margin:28px auto 0; display:block }
+    .sensor-view h1 { font-size:1.7rem; margin:18px 0 0; color:var(--s-ink) }
+    .sensor-lead { font-size:1.05rem; line-height:1.55; margin:10px auto 28px; max-width:32ch; color:#2c3d4a }
+    #sensor-slot-button button { width:100%; min-height:62px; font-size:1.12rem; font-weight:700; font-family:inherit; border:0; border-radius:16px; background:var(--s-accent); color:#fff; box-shadow:0 10px 24px rgba(15,118,110,.32); justify-content:center }
+    #sensor-slot-button button:disabled { opacity:.6 }
+    .sensor-on #sensor-slot-button { display:none }
+    .sensor-live { display:none; align-items:center; gap:10px; padding:14px 22px; border-radius:99px; background:var(--s-ok-soft); color:var(--s-ok); font-weight:700; font-size:1.05rem }
+    .sensor-live .pulse { width:12px; height:12px; border-radius:50%; background:var(--s-ok); animation:sensorlive 1.6s infinite }
+    @keyframes sensorlive { 0% { box-shadow:0 0 0 0 rgba(21,128,61,.5) } 70%,100% { box-shadow:0 0 0 10px rgba(21,128,61,0) } }
+    .sensor-on .sensor-live { display:inline-flex }
+    .sensor-view .status-line { font-size:.95rem; margin:16px auto 0; max-width:34ch; color:var(--s-muted) }
+    .sensor-conn { margin-top:22px; display:inline-flex; padding:8px 14px; border-radius:99px; background:#fff; border:1px solid var(--s-line); font-size:.86rem; color:var(--s-muted) }
+    .sensor-conn p { margin:0; font-size:inherit; color:inherit }
+    .sensor-settings { margin-top:36px; text-align:left; border-top:1px solid var(--s-line); padding-top:14px; color:var(--s-muted) }
+    .sensor-settings summary { font-size:.88rem; text-align:center; cursor:pointer }
+    .sensor-settings label { display:block; margin-top:12px; font-size:.86rem; font-weight:700; color:#2c3d4a }
+    .sensor-settings button { width:100%; margin-top:4px }
+    .sensor-settings #pairing-detail { font-size:.84rem }
+    @media (prefers-reduced-motion:reduce) { .sensor-live .pulse { animation:none } }
   </style>
 </head>
 <body>
 <main>
+  <!-- Wearable phone (opened from the pairing QR/link with ?mode=sensor): single-purpose screen.
+       The motion button, status and connection controls are moved in here at startup. -->
+  <section id="sensor-view" class="sensor-view" hidden>
+    <div class="sensor-brand"><span><svg width="22" height="22" viewBox="0 0 34 34" aria-hidden="true"><circle cx="17" cy="7" r="3.2" fill="#fff"/><path d="M17 12v9M8 30l4.5-12 4.5 4v8M25.5 30 21 18l-4.5 4M9 16.5l8-4 8 4" stroke="#fff" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>Swaymetry</div>
+    <svg class="sensor-hero" viewBox="0 0 132 132" aria-hidden="true">
+      <circle cx="66" cy="66" r="64" fill="#e3f4f1"/>
+      <g fill="#b9ded7"><circle cx="66" cy="30" r="11"/><rect x="47" y="45" width="38" height="46" rx="14"/><rect x="49" y="84" width="14" height="38" rx="7"/><rect x="69" y="84" width="14" height="38" rx="7"/></g>
+      <circle cx="66" cy="76" r="17" fill="none" stroke="#14b8a6" stroke-width="2" opacity=".45"/>
+      <rect x="59" y="64" width="14" height="24" rx="3.5" fill="#0f766e" stroke="#fff" stroke-width="2.5"/>
+    </svg>
+    <h1>Motion sensor</h1>
+    <p class="sensor-lead">Strap this phone upright on the lower back (L5), then tap the button. Keep this screen open during the assessment.</p>
+    <div id="sensor-slot-button"></div>
+    <div class="sensor-live" role="status"><span class="pulse"></span>Sending motion data</div>
+    <div id="sensor-slot-status"></div>
+    <div><div class="sensor-conn" id="sensor-slot-conn"></div></div>
+    <details class="sensor-settings"><summary>Connection settings</summary><label for="relay-url">Relay address</label><div id="sensor-slot-settings"></div></details>
+  </section>
   <header class="topbar">
     <div class="brand">
       <svg width="32" height="32" viewBox="0 0 34 34" aria-hidden="true"><circle cx="17" cy="7" r="3.2" fill="#0f9488"/><path d="M17 12v9M8 30l4.5-12 4.5 4v8M25.5 30 21 18l-4.5 4M9 16.5l8-4 8 4" stroke="#0f9488" stroke-width="2.1" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -392,6 +437,18 @@
   if (!sessionId) sessionId=crypto.randomUUID();
   if (isCameraRole) { try { localStorage.setItem('movement-session', sessionId); } catch {} }
   const pair={mode:isCameraRole?'camera':'sensor',session:sessionId,socket:null,remoteRecording:false,remoteSamples:[],peer:false,sidePeer:false,sideReady:false};
+  if (!isCameraRole) {
+    document.body.classList.add('role-sensor'); $('sensor-view').hidden=false;
+    const mb=$('motion-button'); mb.textContent='Enable motion sensor';
+    $('sensor-slot-button').append(mb); $('sensor-slot-status').append($('motion-status'));
+    $('sensor-slot-conn').append($('pairing-status')); $('sensor-slot-settings').append($('relay-url'),$('connect-relay'),$('pairing-detail'));
+    $('motion-status').textContent='';
+    $('pairing-status').textContent='Not connected to the camera station yet.';
+  }
+  // Keep the wearable phone's screen awake: iOS stops motion events once it locks.
+  let wakeLock=null;
+  async function requestWakeLock(){ try { wakeLock=await navigator.wakeLock?.request('screen'); } catch {} }
+  document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'&&motionEnabled&&!isCameraRole) requestWakeLock(); });
   const PUBLIC_BASE='https://kinetic-ai-4.onrender.com';
   function pairingLink(){const relay=encodeURIComponent($('relay-url').value.trim());return `${PUBLIC_BASE}/movement-sensor-diagnostics.html?mode=sensor&session=${pair.session}&relay=${relay}`;}
   function sideCameraLink(){const relay=encodeURIComponent($('relay-url').value.trim());return `${PUBLIC_BASE}/side-camera.html?session=${pair.session}&relay=${relay}`;}
@@ -432,7 +489,7 @@
       }
     }
   }
-  function connectRelay(){const url=$('relay-url').value.trim();if(!url)return $('pairing-detail').textContent='Add your relay address first.';const localOk=url.startsWith('ws://')&&location.protocol!=='https:';if(!url.startsWith('wss://')&&!localOk)return $('pairing-detail').textContent='Use a wss:// relay address (ws:// only works when this page itself is not HTTPS, e.g. the desktop app on your local network).';localStorage.setItem('movement-relay',url);pair.socket?.close();pair.socket=new WebSocket(url);pair.socket.onopen=()=>{sendPair({type:'join',role:pair.mode});$('pairing-status').textContent=`Connected as ${pair.mode} · session ${pair.session}`;log(`Relay socket open. Joining as ${pair.mode}, session ${pair.session}.`);};let sampleLogCount=0,wasStale=true;pair.socket.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='joined')log(`Relay confirmed join: role=${m.role}, session=${m.session}.`);if(pair.mode==='camera'&&m.type==='sample'){updateImuScore(m.sample);lastPhoneSampleAt=Date.now();latestPhoneSample=m.sample;if(wasStale){log('Receiving phone samples.');wasStale=false;}if(sampleLogCount<3){log(`Sample #${++sampleLogCount} from phone: x=${m.sample.ax},y=${m.sample.ay},z=${m.sample.az}.`);}if(trialRecording){phoneSampleBuffer.push({timestamp_seconds:m.sample.elapsedTrial??((performance.now()-trialStartPerf)/1000),accelerometer:{x:m.sample.ax??null,y:m.sample.ay??null,z:m.sample.az??null},gyroscope:{x:m.sample.agx??null,y:m.sample.agy??null,z:m.sample.agz??null},orientation:m.sample.orientation||{roll:null,pitch:null,yaw:null}});}}if(pair.mode==='sensor'&&m.type==='control'){pair.remoteRecording=m.action==='start';if(m.action==='start')trialStartPerf=performance.now();$('motion-status').textContent=pair.remoteRecording?'Recording for the paired camera station…':'Paired camera station stopped the trial.';}if(m.type==='peer'){if(m.role==='sensor')pair.peer=m.connected;log(`Peer message: role=${m.role}, connected=${m.connected}. pair.peer is now ${pair.peer}.`);$('pairing-detail').textContent=`${m.role} ${m.connected?'connected':'disconnected'} to this session.`;}if(m.type==='error'){log(`Relay error: ${m.message}`,'warn');$('pairing-detail').textContent=m.message;}};pair.socket.onerror=()=>{log('Relay WebSocket error.','warn');$('pairing-detail').textContent='Relay connection failed. Confirm the wss:// address.';};pair.socket.onclose=()=>{log('Relay socket closed.','warn');if(pair.socket)$('pairing-status').textContent='Relay disconnected. Reconnect before the next trial.';};}
+  function connectRelay(){const url=$('relay-url').value.trim();if(!url)return $('pairing-detail').textContent='Add your relay address first.';const localOk=url.startsWith('ws://')&&location.protocol!=='https:';if(!url.startsWith('wss://')&&!localOk)return $('pairing-detail').textContent='Use a wss:// relay address (ws:// only works when this page itself is not HTTPS, e.g. the desktop app on your local network).';localStorage.setItem('movement-relay',url);pair.socket?.close();pair.socket=new WebSocket(url);pair.socket.onopen=()=>{sendPair({type:'join',role:pair.mode});$('pairing-status').textContent=pair.mode==='sensor'?'Connected to the camera station':`Connected as ${pair.mode} · session ${pair.session}`;log(`Relay socket open. Joining as ${pair.mode}, session ${pair.session}.`);};let sampleLogCount=0,wasStale=true;pair.socket.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='joined')log(`Relay confirmed join: role=${m.role}, session=${m.session}.`);if(pair.mode==='camera'&&m.type==='sample'){updateImuScore(m.sample);lastPhoneSampleAt=Date.now();latestPhoneSample=m.sample;if(wasStale){log('Receiving phone samples.');wasStale=false;}if(sampleLogCount<3){log(`Sample #${++sampleLogCount} from phone: x=${m.sample.ax},y=${m.sample.ay},z=${m.sample.az}.`);}if(trialRecording){phoneSampleBuffer.push({timestamp_seconds:m.sample.elapsedTrial??((performance.now()-trialStartPerf)/1000),accelerometer:{x:m.sample.ax??null,y:m.sample.ay??null,z:m.sample.az??null},gyroscope:{x:m.sample.agx??null,y:m.sample.agy??null,z:m.sample.agz??null},orientation:m.sample.orientation||{roll:null,pitch:null,yaw:null}});}}if(pair.mode==='sensor'&&m.type==='control'){pair.remoteRecording=m.action==='start';if(m.action==='start')trialStartPerf=performance.now();$('motion-status').textContent=pair.remoteRecording?'Recording for the paired camera station…':'Paired camera station stopped the trial.';}if(m.type==='peer'){if(m.role==='sensor')pair.peer=m.connected;log(`Peer message: role=${m.role}, connected=${m.connected}. pair.peer is now ${pair.peer}.`);$('pairing-detail').textContent=`${m.role} ${m.connected?'connected':'disconnected'} to this session.`;}if(m.type==='error'){log(`Relay error: ${m.message}`,'warn');$('pairing-detail').textContent=m.message;}};pair.socket.onerror=()=>{log('Relay WebSocket error.','warn');$('pairing-detail').textContent='Relay connection failed. Confirm the wss:// address.';};pair.socket.onclose=()=>{log('Relay socket closed.','warn');if(pair.socket)$('pairing-status').textContent='Relay disconnected. Reconnect before the next trial.';};}
   function connectRelayWithSide() {
     connectRelay();
     if (pair.socket && pair.mode === 'camera') {
@@ -566,7 +623,7 @@
       const motionResult=await motionPermission;
       if(motionResult!=='granted') throw new Error(`Motion permission was ${motionResult}`);
       orientationPermission.then(result=>{ if(result==='denied') log('Phone orientation permission denied; neutral-relative tilt may be unavailable.','warn'); });
-      window.addEventListener('devicemotion',onMotion,{passive:true}); motionEnabled=true; $('motion-button').disabled=true;
+      window.addEventListener('devicemotion',onMotion,{passive:true}); motionEnabled=true; $('motion-button').disabled=true; document.body.classList.add('sensor-on'); requestWakeLock();
       $('motion-status').textContent='Motion sensor enabled. Keep the phone fixed at L5 in portrait orientation.'; log('Motion listener enabled.');
     }
     catch(error) { $('motion-status').textContent=`Motion unavailable: ${error.message}`; log(`Motion permission failed — ${error.message}`,'warn'); }
