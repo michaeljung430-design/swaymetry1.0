@@ -1085,6 +1085,7 @@
   renderFailedHistoryList();
   let clinicRenderGeneration=0;
   async function renderClinicReport() {
+    if(!currentAssessment)return;
     const generation=++clinicRenderGeneration;
     currentAssessment.participant_code=$('protocol-participant-code').value.trim()||ClinicReport.participant(currentAssessment);
     const host=ClinicReport.render(currentAssessment,$('clinic-report'));
@@ -1103,7 +1104,6 @@
       };
     } catch(error) { if(generation===clinicRenderGeneration)host.querySelector('#clinic-feedback').textContent='Saved visits could not be loaded. '+error.message; }
   }
-  $('protocol-participant-code').value=currentAssessment.participant_code||ClinicReport.participant(currentAssessment)||'';
   ResultsUI.init({ $, escapeHtml, getAssessment: () => currentAssessment });
   function showAnalysisSubview(which) {
     $('interpreted-view').style.display = which==='interpreted' ? 'block' : 'none';
@@ -1205,6 +1205,7 @@
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
   if (pair.mode!=='camera') { const cc=$('checklist-card'); if (cc) cc.style.display='none'; $('phone-calibration-card').style.display='none'; $('side-camera-card').style.display='none'; $('side-view-column').style.display='none'; $('camera-grid').classList.add('sensor-only'); } else {
     currentAssessment=loadAssessment();
+    $('protocol-participant-code').value=currentAssessment.participant_code||ClinicReport.participant(currentAssessment)||'';
     phoneCalibration=currentAssessment.phone_calibration?.valid?currentAssessment.phone_calibration:null;
     renderPhoneCalibration();
     const saved=currentAssessment.protocol||{};

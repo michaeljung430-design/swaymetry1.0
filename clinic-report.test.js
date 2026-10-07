@@ -3,6 +3,10 @@ const assert = require('node:assert/strict');
 const R = require('./clinic-report.js');
 const A = require('./assessment.js');
 const B = require('./biomechanics.js');
+test('participant restoration happens after session initialization',()=>{
+  const html=require('node:fs').readFileSync(require('node:path').join(__dirname,'movement-sensor-diagnostics.html'),'utf8');
+  assert.ok(html.indexOf("$('protocol-participant-code').value=currentAssessment.participant_code")>html.indexOf('currentAssessment=loadAssessment();'));
+});
 test('horizontal pelvis does not become 180 degrees when landmark order reverses',()=>{
   assert.equal(B.calculateTilt({x:1,y:0},{x:0,y:0}),0);
   assert.equal(B.calculateTilt({x:0,y:0},{x:1,y:0}),0);
