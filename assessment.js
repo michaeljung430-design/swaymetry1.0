@@ -154,7 +154,7 @@
   function numOrNull(v) { return typeof v === 'number' && !Number.isNaN(v) ? v : null; }
 
   function midpoint(a, b) { if (a.x == null || b.x == null) return { x: null, y: null }; return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
-  function tilt(a, b) { if (a.x == null || b.x == null) return null; return deg(Math.atan2(b.y - a.y, b.x - a.x)); }
+  function tilt(a, b) { if (a.x == null || b.x == null) return null; const angle=deg(Math.atan2(b.y-a.y,b.x-a.x)); return ((angle+270)%180)-90; }
   function verticalDeviation(a, b) { if (a.x == null || b.x == null) return null; return deg(Math.atan2(b.x - a.x, a.y - b.y)); }
   function jointAngle(a, b, c) { if (a.x == null || b.x == null || c.x == null) return null; const d1 = Math.hypot(a.x - b.x, a.y - b.y), d2 = Math.hypot(c.x - b.x, c.y - b.y); if (!d1 || !d2) return null; return deg(Math.acos(Math.max(-1, Math.min(1, ((a.x - b.x) * (c.x - b.x) + (a.y - b.y) * (c.y - b.y)) / (d1 * d2))))); }
 
@@ -246,18 +246,22 @@
   function computeCameraMetrics(frames, trial) {
     const rows = frames.map(f => {
       const l = f.landmarks;
+      const dimensioned = Number.isFinite(f.image_width) && f.image_width > 0 && Number.isFinite(f.image_height) && f.image_height > 0;
+      const xy = p => ({ ...p, x: dimensioned && Number.isFinite(p?.x) ? p.x * f.image_width / f.image_height : null, y: dimensioned ? p?.y : null });
+      const geometry = Object.fromEntries(Object.entries(l).map(([name, p]) => [name, xy(p)]));
+      const gh = midpoint(geometry.left_hip, geometry.right_hip), gs = midpoint(geometry.left_shoulder, geometry.right_shoulder);
       const hip = midpoint(l.left_hip, l.right_hip);
       const shoulder = midpoint(l.left_shoulder, l.right_shoulder);
       const ankleGap = (l.left_ankle.x != null && l.right_ankle.x != null) ? Math.hypot(l.left_ankle.x - l.right_ankle.x, l.left_ankle.y - l.right_ankle.y) : null;
       return {
         t: f.timestamp_seconds,
         hip, shoulder,
-        trunk: verticalDeviation(hip, shoulder) != null ? Math.abs(verticalDeviation(hip, shoulder)) : null,
-        trunkSigned: verticalDeviation(hip, shoulder),
-        pelvisTilt: tilt(l.left_hip, l.right_hip),
-        shoulderTilt: tilt(l.left_shoulder, l.right_shoulder),
-        leftKnee: jointAngle(l.left_hip, l.left_knee, l.left_ankle),
-        rightKnee: jointAngle(l.right_hip, l.right_knee, l.right_ankle),
+        trunk: verticalDeviation(gh, gs) != null ? Math.abs(verticalDeviation(gh, gs)) : null,
+        trunkSigned: verticalDeviation(gh, gs),
+        pelvisTilt: tilt(geometry.left_hip, geometry.right_hip),
+        shoulderTilt: tilt(geometry.left_shoulder, geometry.right_shoulder),
+        leftKnee: jointAngle(geometry.left_hip, geometry.left_knee, geometry.left_ankle),
+        rightKnee: jointAngle(geometry.right_hip, geometry.right_knee, geometry.right_ankle),
         leftFrontalKnee: frontalKneeDeviation(l.left_hip, l.left_knee, l.left_ankle, l.right_hip, f.image_width, f.image_height),
         rightFrontalKnee: frontalKneeDeviation(l.right_hip, l.right_knee, l.right_ankle, l.left_hip, f.image_width, f.image_height),
         leftKneeX: l.left_knee.x, rightKneeX: l.right_knee.x,

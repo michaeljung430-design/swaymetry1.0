@@ -53,7 +53,12 @@
   function analyzeTrial(frames, phoneSamples, trialMeta, options = {}) {
     const thresholds = options.thresholds || B.DEFAULT_CONFIDENCE_THRESHOLDS;
     const durationSeconds = trialMeta.duration_seconds || 20;
-    const framesSorted = [...frames].sort((a, b) => a.timestamp_seconds - b.timestamp_seconds);
+    // Use aspect-corrected 2D coordinates, never model-estimated depth as metres.
+    // Original raw frames remain unchanged in IndexedDB.
+    const framesSorted = frames.map(f => {
+      const ratio = f.image_width > 0 && f.image_height > 0 ? f.image_width / f.image_height : null;
+      return { ...f, landmarks: Object.fromEntries(Object.entries(f.landmarks || {}).map(([name, p]) => [name, { ...p, x: ratio && Number.isFinite(p.x) ? p.x * ratio : null, y: ratio ? p.y : null, z: 0 }])) };
+    }).sort((a, b) => a.timestamp_seconds - b.timestamp_seconds);
     const scale = estimateScale(framesSorted, thresholds.usable);
     const quality = B.calculateTrackingQuality(framesSorted, REGION_LANDMARKS, thresholds);
     const cameraOrientation = options.cameraOrientation || 'front';

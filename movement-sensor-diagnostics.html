@@ -19,6 +19,7 @@
   <script src="./results-ui.js"></script>
   <script src="./side-view.js"></script>
   <script src="./validation.js"></script>
+  <script src="./clinic-report.js"></script>
   <script>
     // Only the camera station needs body-pose tracking; skip the download
     // entirely on a phone opened in sensor mode (saves bandwidth/time there).
@@ -29,6 +30,16 @@
     }
   </script>
   <style>
+    @media print {
+      body * { visibility:hidden; }
+      #clinic-report, #clinic-report * { visibility:visible; }
+      #clinic-report { position:absolute; left:0; top:0; width:100%; padding:0; }
+      #clinic-report button, #clinic-previous, #clinic-report label[for="clinic-previous"], #clinic-feedback { display:none; }
+      #clinic-report .table-wrap { overflow:visible; }
+      #clinic-report table { font-size:9pt; }
+      #clinic-report tr { break-inside:avoid; }
+      #clinic-note { border:0; width:100%; }
+    }
     :root {
       color-scheme:light;
       --bg:#f6f7f9; --card:#ffffff; --ink:#122033; --muted:#707c8c;
@@ -382,7 +393,8 @@
       <div id="condition-means"></div>
       <div id="results-body"></div>
       <div id="failed-history-list"></div>
-      <div class="button-row"><button id="store-data-button" type="button">Store data in named folder</button></div>
+      <div class="button-row"><button id="store-data-button" type="button">Save visit on this device</button></div>
+      <div id="clinic-report"></div>
       <p id="store-data-status" class="status-line">Folders are stored in this browser on this device. Use a participant code instead of a full name on shared devices.</p>
     </section>
     <section class="card">
@@ -489,7 +501,7 @@
       }
     }
   }
-  function connectRelay(){const url=$('relay-url').value.trim();if(!url)return $('pairing-detail').textContent='Add your relay address first.';const localOk=url.startsWith('ws://')&&location.protocol!=='https:';if(!url.startsWith('wss://')&&!localOk)return $('pairing-detail').textContent='Use a wss:// relay address (ws:// only works when this page itself is not HTTPS, e.g. the desktop app on your local network).';localStorage.setItem('movement-relay',url);pair.socket?.close();pair.socket=new WebSocket(url);pair.socket.onopen=()=>{sendPair({type:'join',role:pair.mode});$('pairing-status').textContent=pair.mode==='sensor'?'Connected to the camera station':`Connected as ${pair.mode} · session ${pair.session}`;log(`Relay socket open. Joining as ${pair.mode}, session ${pair.session}.`);};let sampleLogCount=0,wasStale=true;pair.socket.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='joined')log(`Relay confirmed join: role=${m.role}, session=${m.session}.`);if(pair.mode==='camera'&&m.type==='sample'){updateImuScore(m.sample);lastPhoneSampleAt=Date.now();latestPhoneSample=m.sample;if(wasStale){log('Receiving phone samples.');wasStale=false;}if(sampleLogCount<3){log(`Sample #${++sampleLogCount} from phone: x=${m.sample.ax},y=${m.sample.ay},z=${m.sample.az}.`);}if(trialRecording){phoneSampleBuffer.push({timestamp_seconds:m.sample.elapsedTrial??((performance.now()-trialStartPerf)/1000),accelerometer:{x:m.sample.ax??null,y:m.sample.ay??null,z:m.sample.az??null},gyroscope:{x:m.sample.agx??null,y:m.sample.agy??null,z:m.sample.agz??null},orientation:m.sample.orientation||{roll:null,pitch:null,yaw:null}});}}if(pair.mode==='sensor'&&m.type==='control'){pair.remoteRecording=m.action==='start';if(m.action==='start')trialStartPerf=performance.now();$('motion-status').textContent=pair.remoteRecording?'Recording for the paired camera station…':'Paired camera station stopped the trial.';}if(m.type==='peer'){if(m.role==='sensor')pair.peer=m.connected;log(`Peer message: role=${m.role}, connected=${m.connected}. pair.peer is now ${pair.peer}.`);$('pairing-detail').textContent=`${m.role} ${m.connected?'connected':'disconnected'} to this session.`;}if(m.type==='error'){log(`Relay error: ${m.message}`,'warn');$('pairing-detail').textContent=m.message;}};pair.socket.onerror=()=>{log('Relay WebSocket error.','warn');$('pairing-detail').textContent='Relay connection failed. Confirm the wss:// address.';};pair.socket.onclose=()=>{log('Relay socket closed.','warn');if(pair.socket)$('pairing-status').textContent='Relay disconnected. Reconnect before the next trial.';};}
+  function connectRelay(){const url=$('relay-url').value.trim();if(!url)return $('pairing-detail').textContent='Add your relay address first.';const localOk=url.startsWith('ws://')&&location.protocol!=='https:';if(!url.startsWith('wss://')&&!localOk)return $('pairing-detail').textContent='Use a wss:// relay address (ws:// only works when this page itself is not HTTPS, e.g. the desktop app on your local network).';localStorage.setItem('movement-relay',url);pair.socket?.close();pair.socket=new WebSocket(url);pair.socket.onopen=()=>{sendPair({type:'join',role:pair.mode});$('pairing-status').textContent=pair.mode==='sensor'?'Connected to the camera station':`Connected as ${pair.mode} · session ${pair.session}`;log(`Relay socket open. Joining as ${pair.mode}, session ${pair.session}.`);};let sampleLogCount=0,wasStale=true;pair.socket.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==='joined')log(`Relay confirmed join: role=${m.role}, session=${m.session}.`);if(pair.mode==='camera'&&m.type==='sample'){updateImuScore(m.sample);lastPhoneSampleAt=Date.now();latestPhoneSample=m.sample;if(wasStale){log('Receiving phone samples.');wasStale=false;}if(sampleLogCount<3){log(`Sample #${++sampleLogCount} from phone: x=${m.sample.ax},y=${m.sample.ay},z=${m.sample.az}.`);}if(trialRecording){phoneSampleBuffer.push({acceleration_source:m.sample.acceleration_source||"unknown",timestamp_seconds:m.sample.elapsedTrial??((performance.now()-trialStartPerf)/1000),accelerometer:{x:m.sample.ax??null,y:m.sample.ay??null,z:m.sample.az??null},gyroscope:{x:m.sample.agx??null,y:m.sample.agy??null,z:m.sample.agz??null},orientation:m.sample.orientation||{roll:null,pitch:null,yaw:null}});}}if(pair.mode==='sensor'&&m.type==='control'){pair.remoteRecording=m.action==='start';if(m.action==='start')trialStartPerf=performance.now();$('motion-status').textContent=pair.remoteRecording?'Recording for the paired camera station…':'Paired camera station stopped the trial.';}if(m.type==='peer'){if(m.role==='sensor')pair.peer=m.connected;log(`Peer message: role=${m.role}, connected=${m.connected}. pair.peer is now ${pair.peer}.`);$('pairing-detail').textContent=`${m.role} ${m.connected?'connected':'disconnected'} to this session.`;}if(m.type==='error'){log(`Relay error: ${m.message}`,'warn');$('pairing-detail').textContent=m.message;}};pair.socket.onerror=()=>{log('Relay WebSocket error.','warn');$('pairing-detail').textContent='Relay connection failed. Confirm the wss:// address.';};pair.socket.onclose=()=>{log('Relay socket closed.','warn');if(pair.socket)$('pairing-status').textContent='Relay disconnected. Reconnect before the next trial.';};}
   function connectRelayWithSide() {
     connectRelay();
     if (pair.socket && pair.mode === 'camera') {
@@ -532,9 +544,9 @@
   }
   function drawGauge() { const c=$('gauge').getContext('2d'), w=320, value=Math.max(0,Math.min(100,100-(cameraScore*.55+imuScore*.45))); c.clearRect(0,0,w,w); c.lineWidth=22; c.strokeStyle='#354151'; c.beginPath(); c.arc(160,160,110,0,Math.PI*2); c.stroke(); c.strokeStyle=value>70?'#178a4c':value>45?'#b5750a':'#c22a2a'; c.beginPath(); c.arc(160,160,110,-Math.PI/2,-Math.PI/2+Math.PI*2*(value/100)); c.stroke(); c.fillStyle='#0f2942'; c.font='bold 50px system-ui'; c.textAlign='center'; c.fillText(Math.round(value),160,176); c.fillStyle='#707c8c'; c.font='16px system-ui'; c.fillText('stability',160,204); requestAnimationFrame(drawGauge); }
   function poseDeg(r) { return r*180/Math.PI; }
-  function poseAngle(a,b,c) { return poseDeg(Math.acos(Math.max(-1,Math.min(1,((a.x-b.x)*(c.x-b.x)+(a.y-b.y)*(c.y-b.y))/(Math.hypot(a.x-b.x,a.y-b.y)*Math.hypot(c.x-b.x,c.y-b.y)||1))))); }
-  function poseTilt(a,b) { return poseDeg(Math.atan2(b.y-a.y,b.x-a.x)); }
-  function poseVertical(a,b) { return Math.abs(poseDeg(Math.atan2(b.x-a.x,a.y-b.y))); }
+  function poseAngle(a,b,c) { const w=video.videoWidth,h=video.videoHeight; if(!w||!h)return null; const u=[(a.x-b.x)*w,(a.y-b.y)*h],v=[(c.x-b.x)*w,(c.y-b.y)*h]; return poseDeg(Math.acos(Math.max(-1,Math.min(1,(u[0]*v[0]+u[1]*v[1])/(Math.hypot(...u)*Math.hypot(...v)||1))))); }
+  function poseTilt(a,b) { if(!video.videoWidth||!video.videoHeight)return null; const angle=poseDeg(Math.atan2((b.y-a.y)*video.videoHeight,(b.x-a.x)*video.videoWidth));return ((angle+270)%180)-90; }
+  function poseVertical(a,b) { return video.videoWidth && video.videoHeight ? Math.abs(poseDeg(Math.atan2((b.x-a.x)*video.videoWidth,(a.y-b.y)*video.videoHeight))) : null; }
   function midpoint(a,b) { return {x:(a.x+b.x)/2,y:(a.y+b.y)/2}; }
   function poseVisible(p) { return p && p.visibility > .45; }
   function poseMetrics(l) { const lh=l[23],rh=l[24],ls=l[11],rs=l[12],lk=l[25],rk=l[26],la=l[27],ra=l[28]; if (![lh,rh,ls,rs,lk,rk,la,ra].every(poseVisible)) return null; const hip=midpoint(lh,rh), sh=midpoint(ls,rs), bodyWidth=Math.hypot(ls.x-rs.x,ls.y-rs.y)||.1; return {hip,bodyWidth,trunk:poseVertical(hip,sh),pelvis:Math.abs(poseTilt(lh,rh)),leftKnee:poseAngle(lh,lk,la),rightKnee:poseAngle(rh,rk,ra),leftFrontalKnee:Assessment.frontalKneeDeviation(lh,lk,la,rh,video.videoWidth,video.videoHeight),rightFrontalKnee:Assessment.frontalKneeDeviation(rh,rk,ra,lh,video.videoWidth,video.videoHeight),leftAnkle:la,rightAnkle:ra}; }
@@ -630,7 +642,7 @@
   };
   $('form-button').onclick=formCheck;
   function loadAssessment() { try { const raw=localStorage.getItem('assessment-current'); if (raw) { const parsed=JSON.parse(raw); if (parsed && parsed.trials) return parsed; } } catch {} return { assessment_id: crypto.randomUUID(), date: new Date().toISOString(), trials: {} }; }
-  function saveCurrentAssessment() { try { localStorage.setItem('assessment-current', JSON.stringify(currentAssessment)); } catch {} }
+  function saveCurrentAssessment() { try { localStorage.setItem('assessment-current', JSON.stringify(currentAssessment)); } catch (error) { log('Session could not be saved. Download results before closing this page.','warn'); } }
   function speak(text, finished) {
     if (!$('voice-guidance').checked || !('speechSynthesis' in window)) { finished?.(); return; }
     window.speechSynthesis.cancel();
@@ -871,6 +883,10 @@
     const trial=Assessment.TRIALS.find(t=>t.trial_name===activeTrialId);
     const record=Assessment.buildTrialRecord({trial,sessionId:currentAssessment.assessment_id,startedAt,endedAt:new Date().toISOString(),phoneSamples:phoneSampleBuffer,cameraFrames:cameraFrameBuffer});
     record.phone_acceleration_source=latestPhoneSample?.acceleration_source||'unknown';
+    record.measurement_version=ClinicReport.VERSION;
+    const sources=new Set(phoneSampleBuffer.map(s=>s.acceleration_source||'unknown'));
+    record.phone_acceleration_source=sources.size>1?'mixed':([...sources][0]||'unknown');
+    record.capture_coverage={camera:ClinicReport.coverage(cameraFrameBuffer,Assessment.TRIAL_DURATION_SECONDS),phone:ClinicReport.coverage(phoneSampleBuffer,Assessment.TRIAL_DURATION_SECONDS)};
     record.phone_calibration=phoneCalibration ? { ...phoneCalibration } : null;
     record.phone_neutral_relative_tilt=Assessment.computeNeutralRelativeTilt(phoneSampleBuffer,phoneCalibration);
     if (record.phone_acceleration_source==='including_gravity') record.measurement_notes.phone_total_sway+=' This trial used the gravity-including fallback; magnitude includes ~9.81 m/s² at rest.';
@@ -900,6 +916,7 @@
     activeTrialId=null;
     refreshTrialAnalysisView();
     setTimeout(()=>{ renderChecklist(); selectNextIncompleteTrial(); },1200);
+    renderClinicReport();
   }
   function renderEvidenceFindings(assessmentJson) {
     const trials=assessmentJson?.trials||[];
@@ -944,6 +961,7 @@
     const assessmentJson=Assessment.buildAssessmentJSON({assessmentId:currentAssessment.assessment_id,patientId:$('protocol-participant-code').value.trim()||null,date:currentAssessment.date,assessmentNumber:loadHistory().length+1,trials});
     renderConditionMeans(assessmentJson);
     renderEvidenceFindings(assessmentJson);
+    renderClinicReport();
     try {
       const aiPayload={...assessmentJson,assessment:{...assessmentJson.assessment,patient_id:null},trials:assessmentJson.trials.map(t=>({ ...t,protocol_context:t.protocol_context?{...t.protocol_context,participant_code:null}:undefined,interpreted:t.interpreted?Interpretation.stripTimeSeriesForAI(t.interpreted):undefined }))};
       const response=await fetch(`${PUBLIC_BASE}/api/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(aiPayload)});
@@ -957,7 +975,7 @@
       log(`AI analysis failed — ${error.message}`,'warn');
       saveToHistory(assessmentJson,null);
     }
-    localStorage.removeItem('assessment-current');
+    saveCurrentAssessment();
     renderFailedHistoryList();
     speak('Assessment complete. Your results are ready. Select Store data to save them in a named folder.');
   }
@@ -1020,7 +1038,7 @@
     $('nav-stored-btn').classList.toggle('active', view==='stored');
   }
   $('nav-home-btn').onclick = () => showView('home');
-  $('nav-results-btn').onclick = () => { showView('results'); refreshTrialAnalysisView(); renderFailedHistoryList(); };
+  $('nav-results-btn').onclick = () => { showView('results'); refreshTrialAnalysisView(); renderFailedHistoryList(); renderClinicReport(); };
   $('nav-stored-btn').onclick = () => { showView('stored'); renderStoredFolders(); };
   async function renderStoredFolders() {
     const container=$('stored-folders');
@@ -1059,11 +1077,33 @@
     if(!name) return;
     if(name.length>80) { $('store-data-status').textContent='Use a folder name under 80 characters.'; return; }
     const history=loadHistory().findLast?.(entry=>entry.assessment?.assessment?.assessment_id===currentAssessment.assessment_id);
+    currentAssessment.participant_code=$('protocol-participant-code').value.trim()||ClinicReport.participant(currentAssessment);
     const folder={id:crypto.randomUUID(),name,saved_at:new Date().toISOString(),assessment:JSON.parse(JSON.stringify(currentAssessment)),analysis:history?.analysis||null};
     try { await RawStore.saveAssessmentFolder(folder); $('store-data-status').textContent=`Saved to “${name}” in Stored data on this device. Download a copy for backup.`; renderStoredFolders(); }
     catch(error) { $('store-data-status').textContent=`Could not store data: ${error.message}`; }
   };
   renderFailedHistoryList();
+  let clinicRenderGeneration=0;
+  async function renderClinicReport() {
+    const generation=++clinicRenderGeneration;
+    currentAssessment.participant_code=$('protocol-participant-code').value.trim()||ClinicReport.participant(currentAssessment);
+    const host=ClinicReport.render(currentAssessment,$('clinic-report'));
+    host.querySelector('#clinic-note').oninput=e=>{currentAssessment.clinician_note=e.target.value;saveCurrentAssessment();};
+    try {
+      const folders=await RawStore.listAssessmentFolders();
+      if(generation!==clinicRenderGeneration)return;
+      const matches=folders.filter(f=>ClinicReport.participant(currentAssessment) && ClinicReport.participant(f.assessment)===ClinicReport.participant(currentAssessment) && f.assessment?.assessment_id!==currentAssessment.assessment_id);
+      const select=host.querySelector('#clinic-previous');
+      select.innerHTML='<option value="">Choose a saved visit</option>'+matches.map(f=>`<option value="${escapeHtml(f.id)}">${escapeHtml(f.name)} · ${escapeHtml(new Date(f.saved_at).toLocaleString())}</option>`).join('');
+      select.onchange=()=>{
+        const prior=matches.find(f=>f.id===select.value),area=host.querySelector('#clinic-progress');
+        if(!prior){area.innerHTML='';return;}
+        const result=ClinicReport.compare(currentAssessment,prior.assessment);
+        area.innerHTML=result.reason?`<p>${escapeHtml(result.reason)}</p>`:`<div class="table-wrap"><table class="summary-table"><thead><tr><th>Condition</th><th>Measurement</th><th>Previous</th><th>Today</th><th>Change</th><th>Usable runs</th></tr></thead><tbody>${result.rows.map(r=>`<tr><td>${escapeHtml(r.condition.replace(/_/g,' '))}</td><td>${escapeHtml(r.metric)}</td><td>${r.previous.toFixed(2)} ${escapeHtml(r.unit)}</td><td>${r.current.toFixed(2)} ${escapeHtml(r.unit)}</td><td>${r.change.toFixed(2)} ${escapeHtml(r.unit)}</td><td>${r.previousN} / ${r.currentN}</td></tr>`).join('')}</tbody></table></div>`;
+      };
+    } catch(error) { if(generation===clinicRenderGeneration)host.querySelector('#clinic-feedback').textContent='Saved visits could not be loaded. '+error.message; }
+  }
+  $('protocol-participant-code').value=currentAssessment.participant_code||ClinicReport.participant(currentAssessment)||'';
   ResultsUI.init({ $, escapeHtml, getAssessment: () => currentAssessment });
   function showAnalysisSubview(which) {
     $('interpreted-view').style.display = which==='interpreted' ? 'block' : 'none';

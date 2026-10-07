@@ -1,4 +1,4 @@
-const CACHE = 'motion-lab-v8-sensor-screen';
+const CACHE = 'motion-lab-v9-clinic-report';
 const ASSETS = [
   './',
   './index.html',
@@ -12,6 +12,7 @@ const ASSETS = [
   './results-ui.js',
   './side-view.js',
   './validation.js',
+  './clinic-report.js',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',

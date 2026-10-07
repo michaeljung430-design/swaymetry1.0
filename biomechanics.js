@@ -59,7 +59,8 @@
   // atan2(right.y-left.y, right.x-left.x) as specified.
   function calculateTilt(leftPoint, rightPoint) {
     if (!leftPoint || !rightPoint || leftPoint.x == null || rightPoint.x == null) return null;
-    return Math.atan2(rightPoint.y - leftPoint.y, rightPoint.x - leftPoint.x) * 180 / Math.PI;
+    const angle=Math.atan2(rightPoint.y - leftPoint.y, rightPoint.x - leftPoint.x) * 180 / Math.PI;
+    return ((angle+270)%180)-90;
   }
 
   // Trunk lean relative to vertical. Vector hipMid->shoulderMid; 0 = perfectly
