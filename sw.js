@@ -1,4 +1,4 @@
-const CACHE = 'motion-lab-v12-ipad-frame-rate';
+const CACHE = 'motion-lab-v13-simple-layout';
 const ASSETS = [
   './',
   './index.html',

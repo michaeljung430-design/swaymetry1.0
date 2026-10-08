@@ -30,6 +30,15 @@
     }
   </script>
   <style>
+    /* Primary workflow stays compact; detailed instructions remain accessible. */
+    #home-view > .button-row { margin-bottom:8px; }
+    #phone-calibration-card summary, #protocol-card summary { cursor:pointer; padding:4px 0; }
+    #phone-calibration-card, #protocol-card, #side-camera-card { padding:14px 18px; }
+    .gauge-badge { display:none; }
+    .trial-action-row { position:sticky; bottom:0; z-index:8; padding:12px; background:rgba(255,255,255,.97); border:1px solid #e1e6eb; border-radius:12px; }
+    .trial-action-row #start-trial-button { min-width:150px; }
+    #home-view .secondary-row { gap:8px; }
+    #home-view .secondary-row button { padding:6px 10px; font-size:.8rem; }
     @media print {
       body * { visibility:hidden; }
       #clinic-report, #clinic-report * { visibility:visible; }
@@ -282,21 +291,24 @@
   <p id="camera-status" class="status-line">Not requested.</p>
   <p id="motion-status" class="status-line">Place the phone vertically at the lower back (L5), then enable the sensor.</p>
   <p id="rest-status" class="status-line">Rest 30–60 seconds between trials.</p>
-  <section class="card" id="phone-calibration-card">
-    <strong>Phone neutral reference</strong>
+  <details class="card" id="phone-calibration-card">
+    <summary><strong>Phone reference &amp; voice instructions</strong></summary>
     <p>Secure the phone at L5 in portrait orientation, with its top toward the head. Stand comfortably upright with both feet on the floor and hands on hips. Do not touch the phone. When phone samples are arriving, click Calibrate phone on the computer and stay still for 5 seconds. Repeat after moving the phone or changing the belt.</p>
     <div class="button-row"><button class="outline" id="calibrate-phone-button" type="button">Calibrate phone · 5 seconds</button><label><input type="checkbox" id="voice-guidance" checked> Speak instructions and 3–2–1 countdown</label></div>
     <p id="phone-calibration-status" class="status-line" role="status">Not calibrated. Overall acceleration is available, but neutral-relative tilt is not.</p>
     <p class="status-line">This records a quiet-standing reference, not a clinical anatomical calibration. It cannot determine which way the phone faces around the vertical axis. Raw readings remain unchanged.</p>
-  </section>
+  </details>
   <section class="card" id="protocol-card">
-    <strong>Standardized trial setup</strong>
+    <strong>Session setup</strong>
+    <p class="status-line">Keep the whole body and feet visible. Hands on hips; phone secured at L5. Stop if unsafe. Rest 30–60 seconds between trials.</p>
+    <label><input type="checkbox" id="protocol-ready"> Setup checked for this session</label>
+    <details><summary>Participant, trial settings &amp; full instructions</summary>
     <p>Keep the camera fixed, full body and both feet visible, phone firmly vertical at L5, footwear and marked foot positions unchanged. Stand upright with hands on hips; do not touch support. Rest 30–60 seconds between runs. If a run has a step, support touch, arm movement, early stop, or eyes opening, use Redo trial.</p>
     <div class="button-row"><label>Runs per condition <select id="protocol-repetitions"><option value="1">1 run</option><option value="2">2 runs</option><option value="3" selected>3 runs</option><option value="4">4 runs</option><option value="5">5 runs</option></select></label><label>Seconds per run <select id="protocol-duration"><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="20">20 seconds</option><option value="30" selected>30 seconds</option><option value="45">45 seconds</option><option value="60">60 seconds</option></select></label></div>
     <p id="protocol-mode-note" class="status-line">Standard protocol: 3 runs × 30 seconds per condition.</p>
     <div class="button-row"><label>Computer camera view <select id="protocol-camera-view"><option value="front">Front</option></select></label><label>Anonymous participant code <input id="protocol-participant-code" autocomplete="off" placeholder="e.g. P001"></label></div>
     <label><input type="checkbox" id="require-side-camera"> Include iPad side camera in this session</label>
-    <label><input type="checkbox" id="protocol-ready"> Setup checked for this session</label>
+    </details>
   </section>
   <details class="card" id="side-camera-card">
     <summary><strong>Connect iPad side camera · scan QR</strong></summary>
@@ -307,7 +319,7 @@
     </div>
     <div class="button-row"><button class="outline" id="copy-side-link">Copy iPad link instead</button></div>
     <p id="side-camera-status" class="status-line">Not connected. The front-only protocol still works when the iPad option is off.</p>
-    <p class="status-line">The iPad sends a low-resolution live video preview (about 2 frames per second) and body landmarks to this computer. The relay does not save video. Side-view angles are 2D projections, not 3D motion capture.</p>
+    <p class="status-line">Preview frame rate adapts to the camera and connection. The relay does not save video. Side-view angles are 2D estimates, not 3D motion capture.</p>
   </details>
 
   <p class="trial-eyebrow" id="active-trial-title">Trial</p>
@@ -412,14 +424,14 @@
         </div>
       </div>
     </section>
-    <section class="card" id="validation-card">
-      <strong>Laboratory validation workspace</strong>
+    <details class="card" id="validation-card">
+      <summary><strong>Advanced: laboratory comparison</strong></summary>
       <p>Import a Vicon CSV from the <em>same recorded trial</em>. The file stays in this browser. The filename is not used to determine the condition—confirm it using the laboratory log. When iPad side-view data exists, its knee-flexion proxy is used; otherwise the computer front-view proxy is used. The app plays a tone at trial start; capture that tone in the laboratory recording or make another shared visible cue, then enter the measured offset below. If no common cue was recorded, timing agreement is unknown. This exploratory comparison is not a clinical accuracy claim.</p>
       <div class="button-row"><label>Reference CSV <input id="validation-file" type="file" accept=".csv,text/csv"></label><label>Vicon time minus app time (s) <input id="validation-offset" type="number" min="-10" max="10" step="0.01" value="0"></label></div>
       <label><input id="validation-confirm" type="checkbox"> I confirmed the participant, condition, repetition, and a shared sync cue in both recordings</label>
       <div class="button-row"><button class="outline" id="validation-run" type="button">Compare selected trial</button><button class="outline" id="validation-export" type="button" disabled>Download comparison report</button></div>
       <div id="validation-result" role="status"><p>Choose a completed trial above, then import its laboratory CSV.</p></div>
-    </section>
+    </details>
   </div>
   <div id="stored-view" style="display:none">
     <section class="card">
