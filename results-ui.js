@@ -138,14 +138,15 @@
       html += metricGrid([
         ['Camera side / measured leg', `${side.camera_side} / ${side.measured_leg}`],
         ['Side-view frames', `${side.frame_count} (${Math.round((side.knee_tracking_fraction ?? 0) * 100)}% knee usable)`],
-        ['Mean knee flexion proxy', fmt(side.mean_knee_flexion_proxy_deg, '°')],
+        ['Average knee bend (2D estimate)', fmt(side.mean_knee_flexion_proxy_deg, '°')],
         ['Most extended (least bend)', fmt(side.min_knee_flexion_proxy_deg, '°')],
-        ['Max knee flexion proxy', fmt(side.max_knee_flexion_proxy_deg, '°')],
+        ['Greatest knee bend (2D estimate)', fmt(side.max_knee_flexion_proxy_deg, '°')],
+        ['Time of greatest knee bend', fmt(side.peak_knee_flexion_time_seconds, ' s')],
         ['Knee bend range', fmt(side.knee_flexion_range_deg, '°')],
         ['Mean hip flexion proxy', fmt(side.mean_hip_flexion_proxy_deg, '°')],
         ['Mean trunk lean', fmt(side.mean_trunk_lean_deg, '°')],
         ['Horizontal hip excursion', fmt(side.horizontal_hip_excursion_body_heights, ' body heights', 3)],
-      ]) + `<p class="status-line">${escapeHtml(side.note)} Facial landmarks are not drawn or transmitted from the iPad.</p>`;
+      ]) + `<p class="status-line">0° means the hip–knee–ankle points appear straight in the side image; 20° means approximately 20° of projected knee bend, not a 160° bend. Keep the iPad fixed and exactly side-on with the measured leg clearly visible. This unsigned angle cannot distinguish hyperextension from flexion. Average, greatest bend and range describe this balance trial, not whether the posture is healthy. ${escapeHtml(side.note)} Facial landmarks are not drawn or transmitted from the iPad.</p>`;
     } else html += '<p>No iPad side-camera recording for this trial.</p>';
 
     html += `<h4 class="results-group-heading">Computer front view · knee deviation</h4>`;

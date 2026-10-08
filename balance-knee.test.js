@@ -1,0 +1,4 @@
+const test=require('node:test'),assert=require('node:assert/strict'),SideView=require('./side-view.js');
+function frame(t,ankleX){const p=(x,y)=>({x,y,confidence:.99});return {timestamp_seconds:t,image_width:100,image_height:100,landmarks:{left_hip:p(.5,.2),left_knee:p(.5,.5),left_ankle:p(ankleX,.8)}};}
+test('side knee straight is zero and peak bend has a timestamp',()=>{const r=SideView.analyze([frame(0,.5),frame(1,.8),frame(2,.5)],null,'left');assert.equal(r.min_knee_flexion_proxy_deg,0);assert.equal(r.max_knee_flexion_proxy_deg,45);assert.equal(r.peak_knee_flexion_time_seconds,1);});
+test('missing side joints cannot produce a peak timestamp',()=>{const r=SideView.analyze([{timestamp_seconds:0,image_width:100,image_height:100,landmarks:{}}],null,'left');assert.equal(r.max_knee_flexion_proxy_deg,null);assert.equal(r.peak_knee_flexion_time_seconds,null);});

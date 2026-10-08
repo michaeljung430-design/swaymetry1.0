@@ -58,6 +58,8 @@
     const ankle = values('ankle_interior_angle_deg');
     const hipX = values('hip_x');
     const heights = values('body_height_px');
+    const kneeRows = observations.filter(row => Number.isFinite(row.knee_flexion_proxy_deg) && Number.isFinite(row.timestamp_seconds));
+    const peakKnee = kneeRows.reduce((best, row) => !best || row.knee_flexion_proxy_deg > best.knee_flexion_proxy_deg ? row : best, null);
     return {
       camera_side: cameraSide,
       measured_leg: side,
@@ -70,6 +72,7 @@
       mean_knee_flexion_proxy_deg: rounded(mean(knee)),
       min_knee_flexion_proxy_deg: knee.length ? rounded(Math.min(...knee)) : null,
       max_knee_flexion_proxy_deg: knee.length ? rounded(Math.max(...knee)) : null,
+      peak_knee_flexion_time_seconds: peakKnee ? rounded(peakKnee.timestamp_seconds) : null,
       knee_flexion_range_deg: knee.length ? rounded(Math.max(...knee) - Math.min(...knee)) : null,
       knee_flexion_series: observations.filter(row => Number.isFinite(row.timestamp_seconds) && Number.isFinite(row.knee_flexion_proxy_deg)).map(row => ({ t:rounded(row.timestamp_seconds), value:rounded(row.knee_flexion_proxy_deg) })),
       mean_hip_flexion_proxy_deg: rounded(mean(hip)),
@@ -119,6 +122,17 @@
     dot(p('right_knee'), '#f2b134');
     dot(shoulders, '#f2b134');
     dot(hips, '#0f9488');
+    const bend = angle(p(`${nearSide}_hip`), p(`${nearSide}_knee`), p(`${nearSide}_ankle`));
+    const kneePoint = p(`${nearSide}_knee`);
+    if (bend != null && kneePoint) {
+      ctx.font = `${Math.max(14, Math.round(width / 35))}px sans-serif`;
+      const label = `${nearSide} knee ${(180 - bend).toFixed(1)}° bend (2D)`;
+      const labelX = Math.max(4, Math.min(kneePoint.x + 12, width - ctx.measureText(label).width - 8));
+      const labelY = Math.max(24, Math.min(kneePoint.y - 12, height - 8));
+      ctx.fillStyle = '#102c3d';
+      ctx.fillRect(labelX - 4, labelY - Math.max(18, Math.round(width / 35)), ctx.measureText(label).width + 8, Math.max(24, Math.round(width / 35) + 6));
+      ctx.fillStyle = '#fff'; ctx.fillText(label, labelX, labelY);
+    }
   }
   global.SideView = { analyze, drawStick };
 })(typeof window !== 'undefined' ? window : globalThis);

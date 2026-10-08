@@ -1,4 +1,4 @@
-const CACHE = 'motion-lab-v10-clinic-startup';
+const CACHE = 'motion-lab-v11-balance-knee-bend';
 const ASSETS = [
   './',
   './index.html',
