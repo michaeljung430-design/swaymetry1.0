@@ -1,4 +1,4 @@
-const CACHE = 'motion-lab-v11-balance-knee-bend';
+const CACHE = 'motion-lab-v12-ipad-frame-rate';
 const ASSETS = [
   './',
   './index.html',

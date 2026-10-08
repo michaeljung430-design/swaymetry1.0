@@ -34,7 +34,7 @@
   const video = $('video'), canvas = $('overlay');
   const bodyNames = ['left_shoulder','right_shoulder','left_elbow','right_elbow','left_wrist','right_wrist','left_hip','right_hip','left_knee','right_knee','left_ankle','right_ankle','left_heel','right_heel','left_foot_index','right_foot_index'];
   const indices = {left_shoulder:11,right_shoulder:12,left_elbow:13,right_elbow:14,left_wrist:15,right_wrist:16,left_hip:23,right_hip:24,left_knee:25,right_knee:26,left_ankle:27,right_ankle:28,left_heel:29,right_heel:30,left_foot_index:31,right_foot_index:32};
-  let socket, stream, pose, detecting = false, recording = false, startedAt = 0, lastSentAt = 0, lastStatusAt = 0, lastPreviewAt = 0;
+  let socket, stream, pose, detecting = false, recording = false, startedAt = 0, lastSentAt = 0, lastStatusAt = 0;
   const previewCanvas = document.createElement('canvas');
   const previewContext = previewCanvas.getContext('2d');
   function status(message, detail = '') { $('status').textContent = message; if (detail) $('detail').textContent = detail; }
@@ -61,8 +61,13 @@
     if (!navigator.mediaDevices?.getUserMedia) { status('Camera unavailable', 'Open this HTTPS link in Safari on the iPad.'); return; }
     $('enable').disabled = true;
     try {
-      const request = navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: $('facing').value } }, audio: false });
+      const request = navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: $('facing').value }, width:{ideal:1280}, height:{ideal:720}, frameRate:{ideal:60} }, audio: false });
       stream = await Promise.race([request, new Promise((_, reject) => setTimeout(() => reject(new Error('Camera request timed out')), 10000))]);
+      const track=stream.getVideoTracks()[0];
+      const maximum=track.getCapabilities?.().frameRate?.max;
+      if(Number.isFinite(maximum)) {
+        try { await track.applyConstraints({frameRate:{ideal:maximum}}); } catch { /* Keep the working negotiated camera mode. */ }
+      }
       video.srcObject = stream; await video.play();
       $('facing').disabled = true;
       const actualFacing = stream.getVideoTracks()[0]?.getSettings()?.facingMode;
@@ -82,21 +87,33 @@
         const tracked = index => (landmarks?.[index]?.visibility ?? 0) >= .45;
         const ready = !!landmarks && [11,12,23,24].every(tracked) && ((tracked(25) && tracked(27)) || (tracked(26) && tracked(28)));
         if (now - lastStatusAt > 1000) { send({ type:'side_status', ready, camera_side:$('camera-side').value, frame }); lastStatusAt = now; }
-        if (socket?.readyState === WebSocket.OPEN && now - lastPreviewAt >= 500) {
-          lastPreviewAt = now;
-          const scale = Math.min(1, 320 / Math.max(video.videoWidth, video.videoHeight));
-          previewCanvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-          previewCanvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-          previewContext.drawImage(video, 0, 0, previewCanvas.width, previewCanvas.height);
-          const jpeg = previewCanvas.toDataURL('image/jpeg', 0.55);
-          if (jpeg.length < 90000) send({ type:'side_preview', image:jpeg });
-        }
-        if (!recording || !landmarks || now - lastSentAt < 100) return;
+        if (!recording || !landmarks || socket?.bufferedAmount > 180000) return;
         lastSentAt = now;
         send({ type:'pose', trial_time_seconds:(now-startedAt)/1000, camera_side:$('camera-side').value, frame });
       });
+      // Preview follows new camera frames, not pose inference. Drop frames rather
+      // than queue stale images when the relay cannot keep up.
+      let previewBusy=false,lastMediaTime=-1;
+      const previewLoop=(now,metadata)=>{
+        if(!stream)return;
+        const mediaTime=metadata?.mediaTime??video.currentTime;
+        if(!previewBusy && mediaTime!==lastMediaTime && video.readyState>=2 && socket?.readyState===WebSocket.OPEN && socket.bufferedAmount<90000){
+          lastMediaTime=mediaTime;
+          const scale=Math.min(1,640/Math.max(video.videoWidth,video.videoHeight));
+          const w=Math.max(1,Math.round(video.videoWidth*scale)),h=Math.max(1,Math.round(video.videoHeight*scale));
+          if(previewCanvas.width!==w)previewCanvas.width=w;
+          if(previewCanvas.height!==h)previewCanvas.height=h;
+          previewContext.drawImage(video,0,0,w,h);previewBusy=true;
+          previewCanvas.toBlob(blob=>{
+            if(!blob){previewBusy=false;return;}
+            const reader=new FileReader();reader.onload=()=>{if(typeof reader.result==='string'&&reader.result.length<90000&&socket?.bufferedAmount<90000)send({type:'side_preview',image:reader.result});previewBusy=false;};reader.onerror=()=>{previewBusy=false;};reader.readAsDataURL(blob);
+          },'image/jpeg',.55);
+        }
+        if(video.requestVideoFrameCallback)video.requestVideoFrameCallback(previewLoop);else requestAnimationFrame(previewLoop);
+      };
+      if(video.requestVideoFrameCallback)video.requestVideoFrameCallback(previewLoop);else requestAnimationFrame(previewLoop);
       const loop = () => { if (!stream) return; if (!detecting && video.readyState >= 2) { detecting = true; pose.send({ image:video }).catch(() => {}).finally(() => { detecting = false; }); } requestAnimationFrame(loop); };
-      loop(); if (!actualFacing || actualFacing === $('facing').value) status('Camera tracking', 'Side-view video preview and body outline are visible on the computer. Keep the iPad fixed.');
+      loop(); if (!actualFacing || actualFacing === $('facing').value) status('Camera tracking', `Camera negotiated ${track.getSettings().frameRate ?? 'unknown'} FPS. Computer preview and body tracking may be slower. Keep the iPad fixed.`);
     } catch (error) { status('Camera unavailable', error.message); $('enable').disabled = false; $('facing').disabled = false; stream?.getTracks().forEach(track => track.stop()); stream = null; }
   };
   if (session) $('connect').click();

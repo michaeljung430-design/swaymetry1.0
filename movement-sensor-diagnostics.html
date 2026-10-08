@@ -439,6 +439,7 @@
   let trialRecording = false, trialTimer = null, countdownTimer = null, activeTrialId = null, readinessPoll = null, trialStartPerf = null, pendingBodyWait = null, lastPoseAt = 0;
   let restUntil = 0;
   let phoneSampleBuffer = [], cameraFrameBuffer = [], sideFrameBuffer = [], lastPhoneSampleAt = 0, lastSideStatusAt = 0, currentAssessment = null, latestPhoneSample = null, sideCameraFacing = 'left';
+  let sidePreviewCount=0,sidePreviewWindow=performance.now(),sidePreviewFps=null;
   let phoneCalibrationSamples = null, phoneCalibrationTimer = null, phoneCalibration = null;
   let latestOrientation = { roll: null, pitch: null, yaw: null };
   window.addEventListener('deviceorientation', e => { latestOrientation = { roll: e.gamma ?? null, pitch: e.beta ?? null, yaw: e.alpha ?? null }; });
@@ -480,7 +481,11 @@
       const image = $('side-video-preview');
       image.src = message.image;
       image.style.display = 'block';
-      $('side-view-hint').textContent = 'Live iPad video preview · about 2 frames per second';
+      const previewNow=performance.now();
+      if(sidePreviewCount===0 && sidePreviewFps==null)sidePreviewWindow=previewNow;
+      sidePreviewCount++;
+      if(previewNow-sidePreviewWindow>=1000){sidePreviewFps=sidePreviewCount*1000/(previewNow-sidePreviewWindow);sidePreviewCount=0;sidePreviewWindow=previewNow;}
+      $('side-view-hint').textContent = `Live iPad preview · ${sidePreviewFps==null?'measuring received FPS…':sidePreviewFps.toFixed(1)+' received FPS'} · tracking rate is separate`;
     }
     if (message.type === 'side_status') {
       pair.sideReady = !!message.ready;
@@ -497,7 +502,7 @@
         const sideTrial=Assessment.TRIALS.find(t=>t.id===activeTrialId)||null;
         const sideKnee=SideView.analyze([frame],sideTrial,sideCameraFacing);
         $('side-knee-bend').textContent=sideKnee.mean_knee_flexion_proxy_deg==null?'— (knee not visible)':`${sideKnee.measured_leg} knee: ${sideKnee.mean_knee_flexion_proxy_deg.toFixed(1)}° bend from projected straight`;
-        if (message.type === 'pose' && trialRecording && sideFrameBuffer.length < 1200) sideFrameBuffer.push(frame);
+        if (message.type === 'pose' && trialRecording && sideFrameBuffer.length < 14400) sideFrameBuffer.push(frame);
       }
     }
   }
